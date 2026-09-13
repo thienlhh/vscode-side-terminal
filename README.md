@@ -1,5 +1,8 @@
 # Side Terminal
 
+[![Open VSX Version](https://img.shields.io/open-vsx/v/thienle/side-terminal)](https://open-vsx.org/extension/thienle/side-terminal)
+[![License](https://img.shields.io/github/license/thienlhh/vscode-side-terminal)](LICENSE)
+
 An independent sidebar terminal that runs alongside VS Code's built-in integrated terminal. Dock its view in the **Secondary Side Bar** to keep both available at once.
 
 Side Terminal uses xterm and native PTYs (`node-pty`) for interactive shells, multiple tabs, ANSI output, resize, and clickable file/URL links. It operates independently: it does not move your built-in Terminal view, relocate other panels, or change global terminal settings.

@@ -2,7 +2,7 @@
   "name": "side-terminal",
   "displayName": "Side Terminal",
   "description": "Dedicated Side Bar Terminal with multiple tabs, interactive shell, cursor customization, and AI Agent execution monitoring.",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "publisher": "thienle",
   "engines": {
     "vscode": "^1.80.0"
