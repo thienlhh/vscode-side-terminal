@@ -62,11 +62,24 @@ function createEnvironment() {
     warnings: [],
     copied: [],
     clipboardReads: 0,
-    openedSchemes: []
+    openedSchemes: [],
+    openedDocuments: [],
+    revealedRanges: [],
+    executedCommands: []
   };
   const workspace = {
     get isTrusted() { return state.trusted; },
     workspaceFolders: [],
+    openTextDocument(uri) {
+      state.openedDocuments.push(uri.fsPath);
+      return Promise.resolve({ uri });
+    },
+    findFiles(pattern) {
+      if (pattern.includes('fallback.ts')) {
+        return Promise.resolve([Uri.file('/workspace/nested/fallback.ts')]);
+      }
+      return Promise.resolve([]);
+    },
     getConfiguration() {
       return {
         get(key, fallback) {
@@ -94,10 +107,22 @@ function createEnvironment() {
       onDidStartTerminalShellExecution: events.shell.on,
       showErrorMessage(message) { state.errors.push(message); return Promise.resolve(); },
       showWarningMessage(message) { state.warnings.push(message); return Promise.resolve(); },
+      showTextDocument(doc, options) {
+        return Promise.resolve({
+          document: doc,
+          selection: options?.selection,
+          revealRange(range, type) { state.revealedRanges.push({ range, type }); }
+        });
+      },
       show() {}
     },
     workspace,
-    commands: { executeCommand() { return Promise.resolve(); } },
+    commands: {
+      executeCommand(command, ...args) {
+        state.executedCommands.push({ command, args });
+        return Promise.resolve();
+      }
+    },
     env: {
       openExternal(uri) { state.openedSchemes.push(uri.scheme); return Promise.resolve(true); },
       clipboard: {
@@ -257,6 +282,30 @@ serialTest('external navigation permits HTTP/HTTPS and rejects command/file sche
   firstView.send({ type: 'openUrl', url: 'command:workbench.action.files.newUntitledFile' });
   firstView.send({ type: 'openUrl', url: 'file:///private/file' });
   assert.deepEqual(environment.state.openedSchemes, ['https', 'http']);
+  provider.dispose();
+});
+
+serialTest('resolves file links with coordinates, workspace fallback, and editor selection', async () => {
+  const { environment, provider, firstView } = setup();
+  // Existing workspace file
+  firstView.send({ type: 'openFile', path: 'package.json', line: 10, col: 5 });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.ok(environment.state.openedDocuments.some(doc => doc.endsWith('package.json')));
+  assert.ok(environment.state.revealedRanges.length > 0);
+  assert.equal(environment.state.revealedRanges[0].range.start.line, 9);
+  assert.equal(environment.state.revealedRanges[0].range.start.character, 4);
+
+  // Fallback search
+  environment.vscode.workspace.workspaceFolders = [{ uri: environment.vscode.Uri.file('/workspace') }];
+  firstView.send({ type: 'openFile', path: 'fallback.ts', line: 20 });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.ok(environment.state.openedDocuments.some(doc => doc.endsWith('nested/fallback.ts')));
+
+  // Unresolvable path
+  firstView.send({ type: 'openFile', path: 'nonexistent-file-12345.xyz' });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.ok(environment.state.warnings.some(w => w.includes('nonexistent-file-12345.xyz')));
+
   provider.dispose();
 });
 

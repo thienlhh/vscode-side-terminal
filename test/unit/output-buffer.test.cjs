@@ -185,6 +185,49 @@ test('file links preserve leading-zero coordinates and quoted spaces', () => {
   assert.equal(links[0].col, 3);
 });
 
+test('file links handle compiler errors with trailing colons and parenthesized coordinates', () => {
+  const colonError = parseTerminalFileLinks('src/main.ts:42:7: error TS1234');
+  assert.equal(colonError.length, 1);
+  assert.equal(colonError[0].path, 'src/main.ts');
+  assert.equal(colonError[0].line, 42);
+  assert.equal(colonError[0].col, 7);
+
+  const tscError = parseTerminalFileLinks('src/main.ts(42,7): error TS1234');
+  assert.equal(tscError.length, 1);
+  assert.equal(tscError[0].path, 'src/main.ts');
+  assert.equal(tscError[0].line, 42);
+  assert.equal(tscError[0].col, 7);
+
+  const lineOnlyError = parseTerminalFileLinks('src/main.ts:42: error TS1234');
+  assert.equal(lineOnlyError.length, 1);
+  assert.equal(lineOnlyError[0].path, 'src/main.ts');
+  assert.equal(lineOnlyError[0].line, 42);
+  assert.equal(lineOnlyError[0].col, undefined);
+});
+
+test('file links detect extensionless build files, dotfiles, and GitHub anchors', () => {
+  const makefile = parseTerminalFileLinks('Makefile:15: *** missing separator');
+  assert.equal(makefile.length, 1);
+  assert.equal(makefile[0].path, 'Makefile');
+  assert.equal(makefile[0].line, 15);
+
+  const dotfile = parseTerminalFileLinks('.gitignore:5: ignored');
+  assert.equal(dotfile.length, 1);
+  assert.equal(dotfile[0].path, '.gitignore');
+  assert.equal(dotfile[0].line, 5);
+
+  const githubAnchor = parseTerminalFileLinks('src/main.ts#L42C7');
+  assert.equal(githubAnchor.length, 1);
+  assert.equal(githubAnchor[0].path, 'src/main.ts');
+  assert.equal(githubAnchor[0].line, 42);
+  assert.equal(githubAnchor[0].col, 7);
+
+  const pythonTrace = parseTerminalFileLinks('File "/path/to/script.py", line 42, in run');
+  assert.equal(pythonTrace.length, 1);
+  assert.equal(pythonTrace[0].path, '/path/to/script.py');
+  assert.equal(pythonTrace[0].line, 42);
+});
+
 test('output buffer preserves surrogate pairs across batch chunking', () => {
   const messages = [];
   const buffer = new OutputBuffer((message) => { messages.push(message); }, {

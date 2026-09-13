@@ -1,4 +1,4 @@
-import { Terminal, ITheme, ILink, IBufferLine } from '@xterm/xterm';
+import { Terminal, ITheme, ILink } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { parseTerminalFileLinks } from './linkParser';
 import type { TerminalConfig } from '../provider/terminalConfig';
@@ -135,36 +135,101 @@ const themeObserver = new MutationObserver(() => {
 });
 themeObserver.observe(document.body, { attributes: true, attributeFilter: ['class', 'style'] });
 
+interface LogicalLine {
+  text: string;
+  charMap: Array<{ x: number; y: number }>;
+  startY: number;
+  endY: number;
+}
+
+function getLogicalLine(term: Terminal, bufferLineNumber: number): LogicalLine | null {
+  const lineIndex = bufferLineNumber - 1;
+  const targetLine = term.buffer.active.getLine(lineIndex);
+  if (!targetLine) return null;
+
+  let startY = lineIndex;
+  while (startY > 0 && term.buffer.active.getLine(startY)?.isWrapped) {
+    startY--;
+  }
+
+  let endY = lineIndex;
+  while (endY + 1 < term.buffer.active.length && term.buffer.active.getLine(endY + 1)?.isWrapped) {
+    endY++;
+  }
+
+  const charMap: Array<{ x: number; y: number }> = [];
+  let logicalText = '';
+
+  for (let y = startY; y <= endY; y++) {
+    const line = term.buffer.active.getLine(y);
+    if (!line) continue;
+
+    const isLastWrappedLine = y === endY;
+    const lineStr = line.translateToString(isLastWrappedLine);
+
+    let textOffset = 0;
+    for (let cellIndex = 0; cellIndex < line.length; cellIndex++) {
+      const cell = line.getCell(cellIndex);
+      if (!cell) continue;
+      const chars = cell.getChars() || (cell.getWidth() > 0 ? ' '.repeat(cell.getWidth()) : '');
+      if (!chars) continue;
+
+      if (textOffset >= lineStr.length) break;
+
+      const takeChars = Math.min(chars.length, lineStr.length - textOffset);
+      for (let ci = 0; ci < takeChars; ci++) {
+        charMap.push({ x: cellIndex + 1, y: y + 1 });
+      }
+      textOffset += chars.length;
+    }
+    logicalText += lineStr;
+  }
+
+  return {
+    text: logicalText,
+    charMap,
+    startY: startY + 1,
+    endY: endY + 1
+  };
+}
+
+function rangesOverlap(a: { start: { x: number; y: number }; end: { x: number; y: number } }, b: { start: { x: number; y: number }; end: { x: number; y: number } }, cols: number): boolean {
+  const aStart = a.start.y * cols + a.start.x;
+  const aEnd = a.end.y * cols + a.end.x;
+  const bStart = b.start.y * cols + b.start.x;
+  const bEnd = b.end.y * cols + b.end.x;
+  return aStart <= bEnd && aEnd >= bStart;
+}
+
 function registerCustomLinkProvider(term: Terminal) {
   term.registerLinkProvider({
     provideLinks(bufferLineNumber: number, callback: (links: ILink[] | undefined) => void) {
-      const line = term.buffer.active.getLine(bufferLineNumber - 1);
-      if (!line) {
-        callback(undefined);
-        return;
-      }
-      const lineText = line.translateToString(true);
-      if (!lineText) {
+      const logical = getLogicalLine(term, bufferLineNumber);
+      if (!logical || !logical.text) {
         callback(undefined);
         return;
       }
 
+      const { text: lineText, charMap } = logical;
       const links: ILink[] = [];
+      const cols = Math.max(1, term.cols);
 
       // 1. Detect Web URLs (http:// or https://)
       const urlRegex = /(https?:\/\/[^\s"'`<>()[\]{}]+)/g;
       let match: RegExpExecArray | null;
       while ((match = urlRegex.exec(lineText)) !== null) {
         const url = match[1];
-        const startX = terminalColumnForOffset(line, match.index);
-        const endX = terminalColumnForOffset(line, match.index + url.length, true);
+        const startIndex = match.index;
+        const endIndex = startIndex + url.length - 1;
+        if (startIndex >= charMap.length || endIndex >= charMap.length) continue;
+
+        const start = charMap[startIndex];
+        const end = charMap[endIndex];
+        if (bufferLineNumber < start.y || bufferLineNumber > end.y) continue;
 
         links.push({
           text: url,
-          range: {
-            start: { x: startX, y: bufferLineNumber },
-            end: { x: endX, y: bufferLineNumber }
-          },
+          range: { start, end },
           decorations: {
             pointerCursor: true,
             underline: true
@@ -175,22 +240,22 @@ function registerCustomLinkProvider(term: Terminal) {
         });
       }
 
-      // 2. Detect file paths with optional :line[:col].
+      // 2. Detect file paths with optional line/col coordinates
       for (const fileLink of parseTerminalFileLinks(lineText)) {
-        const startX = terminalColumnForOffset(line, fileLink.startX - 1);
-        const endX = terminalColumnForOffset(line, fileLink.endX, true);
+        const startIndex = fileLink.startX - 1;
+        const endIndex = startIndex + fileLink.text.length - 1;
+        if (startIndex < 0 || startIndex >= charMap.length || endIndex >= charMap.length) continue;
 
-        const overlaps = links.some(
-          (l) => startX <= l.range.end.x && endX >= l.range.start.x
-        );
-        if (overlaps) continue;
+        const start = charMap[startIndex];
+        const end = charMap[endIndex];
+        if (bufferLineNumber < start.y || bufferLineNumber > end.y) continue;
+
+        const range = { start, end };
+        if (links.some((existing) => rangesOverlap(existing.range, range, cols))) continue;
 
         links.push({
           text: fileLink.text,
-          range: {
-            start: { x: startX, y: bufferLineNumber },
-            end: { x: endX, y: bufferLineNumber }
-          },
+          range,
           decorations: {
             pointerCursor: true,
             underline: true
@@ -209,23 +274,6 @@ function registerCustomLinkProvider(term: Terminal) {
       callback(links.length > 0 ? links : undefined);
     }
   });
-}
-
-function terminalColumnForOffset(line: IBufferLine, offset: number, end = false): number {
-  let textOffset = 0;
-  for (let cellIndex = 0; cellIndex < line.length; cellIndex++) {
-    const cell = line.getCell(cellIndex);
-    if (!cell) continue;
-    const chars = cell.getChars();
-    if (!chars) continue;
-    const nextOffset = textOffset + chars.length;
-    if (offset < nextOffset || (end && offset === nextOffset)) {
-      return end ? cellIndex + Math.max(1, cell.getWidth()) : cellIndex + 1;
-    }
-    if (offset === textOffset) return cellIndex + 1;
-    textOffset = nextOffset;
-  }
-  return Math.max(1, line.length);
 }
 
 function createTab(id: string, title: string, isAgent: boolean, select = true): Tab {
