@@ -122,6 +122,23 @@ html, body {
   margin-left: 2px;
   opacity: 0.8;
   transition: opacity 0.15s ease, background-color 0.15s ease;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font-family: inherit;
+}
+
+button.tab-close {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+button:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007acc);
+  outline-offset: -1px;
 }
 
 .header-action-btn:hover {
@@ -145,4 +162,9 @@ html, body {
 
 .xterm {
   height: 100%;
+}
+
+.vscode-reduce-motion .tab-item,
+.vscode-reduce-motion .header-action-btn {
+  transition: none;
 }

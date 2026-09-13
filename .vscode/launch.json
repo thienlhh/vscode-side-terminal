@@ -18,6 +18,7 @@
       "type": "extensionHost",
       "request": "launch",
       "args": [
+        "${workspaceFolder}/test/fixtures/workspace",
         "--extensionDevelopmentPath=${workspaceFolder}",
         "--extensionTestsPath=${workspaceFolder}/out/test/suite/index"
       ],

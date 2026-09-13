@@ -1,4 +1,17 @@
-# Implementation Plan: Secondary Terminal Extension
+# Implementation Plan: Side Terminal parity and reliability
+
+The current contract is `SPEC.md`: independent sidebar sessions coexist with the native bottom Terminal view. The original scaffold plan below is historical; `layoutController.ts` is not part of the active extension and must not be reintroduced to move native panel views.
+
+## Current implementation order
+
+1. Synchronize the manifest/lockfile and make build/watch scripts portable.
+2. Dispose listeners and owned processes; restore tabs and bounded output on view recreation.
+3. Bound output queues and acknowledge parsed batches; pause/resume owned PTYs.
+4. Inherit applicable native appearance, explicit shell profiles, arguments, environment, and cwd. Preserve explicit side overrides.
+5. Validate messages, map mirrors to unique terminal objects, and reconcile mirroring changes.
+6. Run isolated regressions, real PTY smoke checks, VS Code coexistence/navigation tests, and browser QA. Record evidence and remaining OS/agent acceptance in `docs/VALIDATION.md`.
+
+## Original scaffold plan (superseded)
 
 ## 1. Component Architecture & Dependencies
 The extension is built in 4 modular components:

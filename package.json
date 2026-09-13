@@ -12,51 +12,79 @@
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
-    "*"
+    "onView:secondary-terminal.view",
+    "onCommand:secondaryTerminal.toggle",
+    "onCommand:secondaryTerminal.show",
+    "onCommand:secondaryTerminal.openEditorTerminal"
   ],
   "contributes": {
     "configuration": {
       "title": "Side Terminal",
       "properties": {
         "secondaryTerminal.cursorBlink": {
-          "type": "boolean",
-          "default": true,
-          "description": "Controls whether the terminal cursor blinks."
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null,
+          "description": "Optional Side Terminal override. When unset, follows the corresponding integrated terminal setting. Controls whether the terminal cursor blinks."
         },
         "secondaryTerminal.cursorStyle": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "enum": [
             "block",
             "underline",
-            "bar"
+            "bar",
+            null
           ],
-          "default": "block",
-          "description": "Controls the cursor style in the side terminal."
+          "default": null,
+          "description": "Optional Side Terminal override. When unset, follows the corresponding integrated terminal setting. Controls the cursor style in the side terminal."
         },
         "secondaryTerminal.fontSize": {
-          "type": "number",
-          "default": 12,
-          "description": "Controls the font size in pixels in the side terminal."
+          "type": [
+            "number",
+            "null"
+          ],
+          "default": null,
+          "description": "Optional Side Terminal override. When unset, follows the corresponding integrated terminal setting. Controls the font size in pixels in the side terminal.",
+          "minimum": 6,
+          "maximum": 100
         },
         "secondaryTerminal.fontFamily": {
-          "type": "string",
-          "default": "Menlo, Monaco, 'Courier New', monospace, Consolas",
-          "description": "Controls the font family in the side terminal."
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "description": "Optional Side Terminal override. When unset, follows the corresponding integrated terminal setting. Controls the font family in the side terminal."
         },
         "secondaryTerminal.lineHeight": {
-          "type": "number",
-          "default": 1.2,
-          "description": "Controls the line height relative to font size in the side terminal."
+          "type": [
+            "number",
+            "null"
+          ],
+          "default": null,
+          "description": "Optional Side Terminal override. When unset, follows the corresponding integrated terminal setting. Controls the line height relative to font size in the side terminal.",
+          "minimum": 1,
+          "maximum": 3
         },
         "secondaryTerminal.scrollback": {
-          "type": "number",
-          "default": 5000,
-          "description": "Controls the maximum number of lines kept in scrollback history."
+          "type": [
+            "number",
+            "null"
+          ],
+          "default": null,
+          "description": "Optional Side Terminal override. When unset, follows the corresponding integrated terminal setting. Controls the maximum number of lines kept in scrollback history.",
+          "minimum": 0,
+          "maximum": 100000
         },
         "secondaryTerminal.mirrorAgentTerminals": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically mirror recognized AI Agent terminals (Cline, Copilot, Roo, Antigravity) into the Side Terminal view."
+          "description": "Monitor recognized AI agent terminals as read-only tabs. Requires VS Code 1.93+ and shell integration; interactive input stays in the source terminal."
         }
       }
     },
@@ -81,7 +109,7 @@
     "commands": [
       {
         "command": "secondaryTerminal.toggle",
-        "title": "Toggle Side Terminal",
+        "title": "Focus Side Terminal",
         "category": "Terminal",
         "icon": "$(layout-sidebar-right)"
       },
@@ -126,18 +154,19 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
-    "compile-webview": "esbuild ./src/webview/main.ts --bundle --outfile=dist/webview.js --format=iife --platform=browser && cp node_modules/@xterm/xterm/css/xterm.css dist/xterm.css",
-    "compile-ext": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:node-pty --format=cjs --platform=node",
-    "compile": "npm run compile-ext && npm run compile-webview",
-    "watch": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:node-pty --format=cjs --platform=node --watch",
-    "package-ext": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:node-pty --format=cjs --platform=node --minify",
-    "package-webview": "esbuild ./src/webview/main.ts --bundle --outfile=dist/webview.js --format=iife --platform=browser --minify && cp node_modules/@xterm/xterm/css/xterm.css dist/xterm.css",
+    "compile-webview": "node scripts/build.mjs --webview",
+    "compile-ext": "node scripts/build.mjs --extension",
+    "compile": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "package-ext": "node scripts/build.mjs --extension --minify",
+    "package-webview": "node scripts/build.mjs --webview --minify",
     "package": "npm run package-ext && npm run package-webview",
-    "compile-tests": "tsc -p . --outDir out",
+    "compile-tests": "node -e \"require('fs').rmSync('out', { recursive: true, force: true })\" && tsc -p . --outDir out",
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "npm run compile-tests && npm run compile",
     "lint": "tsc --noEmit",
-    "test": "node ./out/test/runTest.js"
+    "test:unit": "node scripts/test-unit.cjs",
+    "test": "npm run test:unit && node ./out/test/runTest.js"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.6",
@@ -153,5 +182,18 @@
   "dependencies": {
     "node-pty": "^1.0.1"
   },
-  "icon": "media/icon.png"
+  "icon": "media/icon.png",
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Side Terminal starts interactive shells in the workspace and requires Workspace Trust."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Native PTY sessions require access to a filesystem workspace."
+    }
+  }
 }

@@ -1,4 +1,8 @@
-# Tasks: Secondary Terminal Extension
+# Tasks: Side Terminal
+
+Current reliability work follows `tasks/plan.md` and the gates in `SPEC.md`. Validation results and outstanding platform/agent checks are tracked in `docs/VALIDATION.md`; the checked scaffold tasks below are historical and do not establish current release readiness.
+
+## Original scaffold tasks (historical)
 
 - [x] Task 1: Initialize Project Structure & Manifest
   - Acceptance: `package.json`, `tsconfig.json`, `.vscode/launch.json`, and `.gitignore` exist with correct metadata, scripts, and dependencies.

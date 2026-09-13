@@ -10,7 +10,8 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(TerminalViewProvider.viewType, provider, {
       webviewOptions: { retainContextWhenHidden: true }
-    })
+    }),
+    provider
   );
 
   // Focus / Toggle Side Terminal View
@@ -34,5 +35,5 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {
-  // Clean up
+  // VS Code disposes context subscriptions, including the provider.
 }

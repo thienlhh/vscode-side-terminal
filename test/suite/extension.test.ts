@@ -5,6 +5,7 @@ import { COMMANDS } from '../../src/constants';
 suite('Secondary Terminal Extension Test Suite', () => {
   suiteSetup(async () => {
     const ext = vscode.extensions.getExtension('local-dev.vscode-secondary-terminal');
+    assert.ok(ext, 'The extension under test must be installed');
     if (ext && !ext.isActive) {
       await ext.activate();
     }
@@ -77,11 +78,25 @@ suite('Secondary Terminal Extension Test Suite', () => {
       show: () => {},
       onDidChangeVisibility: (_listener: () => void) => {
         return { dispose: () => {} };
+      },
+      onDidDispose: (_listener: () => void) => {
+        return { dispose: () => {} };
       }
     };
 
     provider.resolveWebviewView(mockWebviewView, {} as any, {} as any);
     assert.ok(messageListener, 'Message listener should be registered');
+
+    try {
+    const native = vscode.window.createTerminal({ name: 'Native coexistence test' });
+    try {
+      const nativeTerminals = [...vscode.window.terminals];
+      messageListener!({ type: 'ready' });
+      assert.deepStrictEqual(vscode.window.terminals, nativeTerminals, 'Side Terminal must not replace or add native terminal sessions');
+      assert.ok(postedMessages.some(msg => msg.type === 'addTab' && !msg.isAgent) || postedMessages.some(msg => msg.type === 'restoreTabs' && msg.tabs.some((tab: any) => !tab.isAgent)), 'A local side terminal must be announced');
+    } finally {
+      native.dispose();
+    }
 
     // Test openEditorTerminal message
     const termPromise = new Promise<vscode.Terminal>((resolve) => {
@@ -120,7 +135,11 @@ suite('Secondary Terminal Extension Test Suite', () => {
     assert.ok(activeEditor.document.fileName.endsWith('SPEC.md'), 'Active editor file should be SPEC.md');
     assert.strictEqual(activeEditor.selection.active.line, 9, 'Cursor should be on line 10 (0-indexed 9)');
 
-    // Test openUrl message (http/https safe)
-    messageListener!({ type: 'openUrl', url: 'https://example.com' });
+    // Scheme allowlisting is exercised without launching the system browser.
+    messageListener!({ type: 'openUrl', url: 'command:workbench.action.files.newUntitledFile' });
+    assert.strictEqual(vscode.window.activeTextEditor, activeEditor, 'Command URLs must not change the editor');
+    } finally {
+      provider.dispose();
+    }
   });
 });

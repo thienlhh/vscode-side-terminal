@@ -37,6 +37,6 @@ export const VIEW_IDS = {
  */
 export const STATUS_BAR = {
   TEXT: '$(terminal) Side Terminal',
-  TOOLTIP: 'Toggle Secondary Side Bar Terminal (Cmd+Alt+T / Ctrl+Alt+T)',
+  TOOLTIP: 'Focus Side Terminal (Cmd+Alt+T / Ctrl+Alt+T)',
   PRIORITY: 100
 } as const;

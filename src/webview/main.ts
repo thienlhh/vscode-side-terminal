@@ -1,5 +1,7 @@
-import { Terminal, ITheme, ILink } from '@xterm/xterm';
+import { Terminal, ITheme, ILink, IBufferLine } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { parseTerminalFileLinks } from './linkParser';
+import type { TerminalConfig } from '../provider/terminalConfig';
 
 declare function acquireVsCodeApi(): {
   postMessage(message: unknown): void;
@@ -8,15 +10,7 @@ declare function acquireVsCodeApi(): {
 };
 
 const vscode = acquireVsCodeApi();
-
-interface TerminalConfig {
-  cursorBlink: boolean;
-  cursorStyle: 'block' | 'underline' | 'bar';
-  fontSize: number;
-  fontFamily: string;
-  lineHeight: number;
-  scrollback: number;
-}
+const savedState = vscode.getState() as { activeTabId?: unknown } | undefined;
 
 let currentConfig: TerminalConfig = {
   cursorBlink: true,
@@ -31,6 +25,7 @@ interface Tab {
   id: string;
   title: string;
   isAgent: boolean;
+  restoreWrites: number;
   term: Terminal;
   fitAddon: FitAddon;
   element: HTMLElement;
@@ -38,6 +33,7 @@ interface Tab {
 
 const tabs: Map<string, Tab> = new Map();
 let activeTabId: string | null = null;
+let preferredTabId = typeof savedState?.activeTabId === 'string' ? savedState.activeTabId : null;
 
 const tabListEl = document.getElementById('tab-list') as HTMLElement;
 const terminalContainerEl = document.getElementById('terminal-container') as HTMLElement;
@@ -56,6 +52,7 @@ openEditorBtn?.addEventListener('click', () => {
 clearTabBtn?.addEventListener('click', () => {
   if (activeTabId && tabs.has(activeTabId)) {
     tabs.get(activeTabId)!.term.clear();
+    vscode.postMessage({ type: 'clearTab', tabId: activeTabId });
   }
 });
 
@@ -111,9 +108,11 @@ function getTerminalTheme(): ITheme {
 function updateAllThemes() {
   const currentTheme = getTerminalTheme();
   terminalContainerEl.style.backgroundColor = currentTheme.background || '#181818';
+  const screenReaderMode = document.body.classList.contains('vscode-using-screen-reader');
 
   tabs.forEach((tab) => {
     tab.term.options.theme = currentTheme;
+    tab.term.options.screenReaderMode = screenReaderMode;
   });
 }
 
@@ -157,8 +156,8 @@ function registerCustomLinkProvider(term: Terminal) {
       let match: RegExpExecArray | null;
       while ((match = urlRegex.exec(lineText)) !== null) {
         const url = match[1];
-        const startX = match.index + 1;
-        const endX = match.index + url.length;
+        const startX = terminalColumnForOffset(line, match.index);
+        const endX = terminalColumnForOffset(line, match.index + url.length, true);
 
         links.push({
           text: url,
@@ -176,29 +175,18 @@ function registerCustomLinkProvider(term: Terminal) {
         });
       }
 
-      // 2. Detect File Paths with optional :line[:col]
-      // Matches path patterns like src/index.ts:12:5, ./README.md:20, /abs/path.js, SPEC.md
-      const fileRegex = /(?:^|[\s"'`(\[])((?:[a-zA-Z]:[\\\/]|\/|\.{1,2}[\\\/]|[a-zA-Z0-9_.-]+[\\\/])?[a-zA-Z0-9_.-]+\.[a-zA-Z0-9_+-]+(?::(\d+)(?::(\d+))?)?)/g;
-      while ((match = fileRegex.exec(lineText)) !== null) {
-        const fullMatch = match[1];
-        const lineNum = match[2] ? parseInt(match[2], 10) : undefined;
-        const colNum = match[3] ? parseInt(match[3], 10) : undefined;
-
-        const colonIdx = fullMatch.indexOf(':');
-        const rawPath = colonIdx !== -1 ? fullMatch.substring(0, colonIdx) : fullMatch;
-
-        const matchStart = match.index + (match[0].length - fullMatch.length);
-        const startX = matchStart + 1;
-        const endX = matchStart + fullMatch.length;
+      // 2. Detect file paths with optional :line[:col].
+      for (const fileLink of parseTerminalFileLinks(lineText)) {
+        const startX = terminalColumnForOffset(line, fileLink.startX - 1);
+        const endX = terminalColumnForOffset(line, fileLink.endX, true);
 
         const overlaps = links.some(
-          (l) => (startX >= l.range.start.x && startX <= l.range.end.x) ||
-                 (endX >= l.range.start.x && endX <= l.range.end.x)
+          (l) => startX <= l.range.end.x && endX >= l.range.start.x
         );
         if (overlaps) continue;
 
         links.push({
-          text: fullMatch,
+          text: fileLink.text,
           range: {
             start: { x: startX, y: bufferLineNumber },
             end: { x: endX, y: bufferLineNumber }
@@ -210,9 +198,9 @@ function registerCustomLinkProvider(term: Terminal) {
           activate(_event: MouseEvent, _text: string) {
             vscode.postMessage({
               type: 'openFile',
-              path: rawPath,
-              line: lineNum,
-              col: colNum
+              path: fileLink.path,
+              line: fileLink.line,
+              col: fileLink.col
             });
           }
         });
@@ -223,7 +211,24 @@ function registerCustomLinkProvider(term: Terminal) {
   });
 }
 
-function createTab(id: string, title: string, isAgent: boolean): Tab {
+function terminalColumnForOffset(line: IBufferLine, offset: number, end = false): number {
+  let textOffset = 0;
+  for (let cellIndex = 0; cellIndex < line.length; cellIndex++) {
+    const cell = line.getCell(cellIndex);
+    if (!cell) continue;
+    const chars = cell.getChars();
+    if (!chars) continue;
+    const nextOffset = textOffset + chars.length;
+    if (offset < nextOffset || (end && offset === nextOffset)) {
+      return end ? cellIndex + Math.max(1, cell.getWidth()) : cellIndex + 1;
+    }
+    if (offset === textOffset) return cellIndex + 1;
+    textOffset = nextOffset;
+  }
+  return Math.max(1, line.length);
+}
+
+function createTab(id: string, title: string, isAgent: boolean, select = true): Tab {
   const termEl = document.createElement('div');
   termEl.className = 'terminal-instance';
   termEl.style.display = 'none';
@@ -236,6 +241,8 @@ function createTab(id: string, title: string, isAgent: boolean): Tab {
     fontSize: currentConfig.fontSize,
     lineHeight: currentConfig.lineHeight,
     scrollback: currentConfig.scrollback,
+    disableStdin: isAgent,
+    screenReaderMode: document.body.classList.contains('vscode-using-screen-reader'),
     theme: getTerminalTheme()
   });
 
@@ -285,23 +292,27 @@ function createTab(id: string, title: string, isAgent: boolean): Tab {
     return false;
   });
 
-  // Safety net on optionsService: enforce cursorBlink: false whenever configured
-  const core = (term as any)._core;
-  if (core && core.optionsService) {
-    core.optionsService.onOptionChange((prop: string) => {
-      if (prop === "cursorBlink" && !currentConfig.cursorBlink && term.options.cursorBlink) {
-        term.options.cursorBlink = false;
-      }
-    });
-  }
-
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
   registerCustomLinkProvider(term);
   term.open(termEl);
+  if (isAgent && term.textarea) {
+    term.textarea.readOnly = true;
+    term.textarea.setAttribute('aria-label', 'Read-only agent output');
+  }
+  term.onRender(() => {
+    if (!currentConfig.cursorBlink && term.options.cursorBlink) term.options.cursorBlink = false;
+  });
 
   term.onData((data) => {
-    vscode.postMessage({ type: 'input', tabId: id, data });
+    if (!isAgent && tab.restoreWrites === 0) {
+      for (let offset = 0; offset < data.length;) {
+        let end = Math.min(offset + 64 * 1024, data.length);
+        if (end < data.length && /[\uD800-\uDBFF]/.test(data[end - 1]) && /[\uDC00-\uDFFF]/.test(data[end])) end--;
+        vscode.postMessage({ type: 'input', tabId: id, data: data.slice(offset, end) });
+        offset = end;
+      }
+    }
   });
 
   term.onResize(({ cols, rows }) => {
@@ -312,6 +323,7 @@ function createTab(id: string, title: string, isAgent: boolean): Tab {
     id,
     title,
     isAgent,
+    restoreWrites: 0,
     term,
     fitAddon,
     element: termEl
@@ -319,7 +331,7 @@ function createTab(id: string, title: string, isAgent: boolean): Tab {
 
   tabs.set(id, tab);
   renderTabBar();
-  switchTab(id);
+  if (select) switchTab(id);
 
   return tab;
 }
@@ -327,11 +339,14 @@ function createTab(id: string, title: string, isAgent: boolean): Tab {
 function switchTab(id: string) {
   if (!tabs.has(id)) return;
   activeTabId = id;
+  preferredTabId = id;
+  vscode.setState({ activeTabId: id });
 
   tabs.forEach((tab, tabId) => {
     if (tabId === id) {
       tab.element.style.display = 'block';
       setTimeout(() => {
+        if (activeTabId !== id || !tabs.has(id)) return;
         try {
           tab.fitAddon.fit();
           tab.term.focus();
@@ -353,7 +368,7 @@ function switchTab(id: string) {
   renderTabBar();
 }
 
-function closeTab(id: string) {
+function disposeTab(id: string, notifyHost: boolean) {
   const tab = tabs.get(id);
   if (!tab) return;
 
@@ -361,7 +376,9 @@ function closeTab(id: string) {
   tab.element.remove();
   tabs.delete(id);
 
-  vscode.postMessage({ type: 'closeTab', tabId: id });
+  if (notifyHost) {
+    vscode.postMessage({ type: 'closeTab', tabId: id });
+  }
 
   if (activeTabId === id) {
     const nextId = tabs.keys().next().value;
@@ -369,11 +386,17 @@ function closeTab(id: string) {
       switchTab(nextId);
     } else {
       activeTabId = null;
+      preferredTabId = null;
+      vscode.setState({ activeTabId: null });
       renderTabBar();
     }
   } else {
     renderTabBar();
   }
+}
+
+function closeTab(id: string) {
+  disposeTab(id, true);
 }
 
 function renderTabBar() {
@@ -382,18 +405,32 @@ function renderTabBar() {
   tabs.forEach((tab, id) => {
     const tabEl = document.createElement('div');
     tabEl.className = `tab-item ${id === activeTabId ? 'active' : ''} ${tab.isAgent ? 'agent' : ''}`;
+    tabEl.setAttribute('role', 'tab');
+    tabEl.setAttribute('aria-label', tab.title);
+    tabEl.title = tab.isAgent ? `${tab.title}: read-only monitor. Use the source terminal for input.` : tab.title;
+    tabEl.setAttribute('aria-selected', String(id === activeTabId));
+    tabEl.tabIndex = id === activeTabId ? 0 : -1;
+    tabEl.addEventListener('click', () => switchTab(id));
+    tabEl.addEventListener('keydown', (event) => {
+      if (event.target !== tabEl) return;
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        switchTab(id);
+      }
+    });
 
     const titleSpan = document.createElement('span');
     titleSpan.className = 'tab-title';
     titleSpan.textContent = tab.title;
     titleSpan.title = tab.title;
-    titleSpan.addEventListener('click', () => switchTab(id));
     tabEl.appendChild(titleSpan);
 
-    const closeBtn = document.createElement('span');
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
     closeBtn.className = 'tab-close';
-    closeBtn.innerHTML = '&times;';
-    closeBtn.title = 'Close Tab';
+    closeBtn.textContent = '×';
+    closeBtn.title = `Close ${tab.title}`;
+    closeBtn.setAttribute('aria-label', `Close ${tab.title}`);
     closeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       closeTab(id);
@@ -406,6 +443,26 @@ function renderTabBar() {
 
 // Keyboard navigation for tabs (Alt+[ / Alt+] or Alt+Left / Alt+Right)
 window.addEventListener('keydown', (e) => {
+  const tab = activeTabId ? tabs.get(activeTabId) : undefined;
+  const key = e.key.toLowerCase();
+  if (tab && terminalContainerEl.contains(document.activeElement) && e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && key === 'a') {
+    e.preventDefault();
+    e.stopPropagation();
+    tab.term.selectAll();
+    return;
+  }
+  const clipboardShortcut = !e.altKey && ((e.metaKey && !e.ctrlKey && (key === 'v' || !e.shiftKey)) || (e.ctrlKey && e.shiftKey && !e.metaKey));
+  if (tab && terminalContainerEl.contains(document.activeElement) && clipboardShortcut && (key === 'c' || key === 'v')) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (key === 'c') {
+      const selection = tab.term.getSelection();
+      if (selection) vscode.postMessage({ type: 'copy', tabId: tab.id, data: selection });
+    } else if (!tab.isAgent) {
+      vscode.postMessage({ type: 'paste', tabId: tab.id });
+    }
+    return;
+  }
   if (e.altKey && (e.key === '[' || e.key === 'ArrowLeft' || e.key === ']' || e.key === 'ArrowRight')) {
     const tabIds = Array.from(tabs.keys());
     if (tabIds.length <= 1 || !activeTabId) return;
@@ -416,13 +473,15 @@ window.addEventListener('keydown', (e) => {
       const prevIndex = (currentIndex - 1 + tabIds.length) % tabIds.length;
       switchTab(tabIds[prevIndex]);
       e.preventDefault();
+      e.stopPropagation();
     } else {
       const nextIndex = (currentIndex + 1) % tabIds.length;
       switchTab(tabIds[nextIndex]);
       e.preventDefault();
+      e.stopPropagation();
     }
   }
-});
+}, true);
 
 // Window resize listener
 window.addEventListener('resize', () => {
@@ -435,6 +494,7 @@ window.addEventListener('resize', () => {
 // Listen for messages from extension host
 window.addEventListener('message', (event) => {
   const msg = event.data;
+  if (!msg || typeof msg !== 'object') return;
   switch (msg.type) {
     case 'config': {
       if (msg.config) {
@@ -444,19 +504,56 @@ window.addEventListener('message', (event) => {
     }
     case 'addTab': {
       if (!tabs.has(msg.id)) {
-        createTab(msg.id, msg.title, !!msg.isAgent);
+        createTab(msg.id, msg.title, !!msg.isAgent, !msg.isAgent);
       }
+      break;
+    }
+    case 'restoreTabs': {
+      const restoredTabs = Array.isArray(msg.tabs) ? msg.tabs : [];
+      const restoredIds = new Set(
+        restoredTabs.filter((item: any) => item && typeof item.id === 'string').map((item: any) => item.id)
+      );
+      for (const id of tabs.keys()) {
+        if (!restoredIds.has(id)) disposeTab(id, false);
+      }
+      for (const item of restoredTabs) {
+        if (!item || typeof item.id !== 'string') continue;
+        const isAgent = item.isAgent === true;
+        const tab = tabs.get(item.id) ?? createTab(item.id, String(item.title ?? item.id), isAgent, false);
+        const snapshot = typeof item.snapshot === 'string' ? item.snapshot : item.data;
+        if (typeof snapshot === 'string' && snapshot.length > 0) {
+          tab.restoreWrites++;
+          tab.term.write(snapshot, () => { tab.restoreWrites--; });
+        }
+      }
+      const selectedId = preferredTabId && tabs.has(preferredTabId)
+        ? preferredTabId
+        : tabs.keys().next().value;
+      if (selectedId) switchTab(selectedId);
       break;
     }
     case 'data': {
       const tab = tabs.get(msg.tabId);
       if (tab) {
-        tab.term.write(msg.data);
+        tab.term.write(msg.data, () => {
+          if (Number.isSafeInteger(msg.seq)) {
+            vscode.postMessage({ type: 'outputAck', tabId: msg.tabId, seq: msg.seq });
+          }
+        });
       }
       break;
     }
+    case 'clearTab': {
+      tabs.get(msg.tabId)?.term.clear();
+      break;
+    }
+    case 'paste': {
+      const tab = tabs.get(msg.tabId);
+      if (tab && !tab.isAgent && typeof msg.data === 'string') tab.term.paste(msg.data);
+      break;
+    }
     case 'removeTab': {
-      closeTab(msg.tabId);
+      disposeTab(msg.tabId, false);
       break;
     }
     case 'selectTab': {
