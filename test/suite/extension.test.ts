@@ -110,16 +110,16 @@ suite('Secondary Terminal Extension Test Suite', () => {
     assert.ok(createdTerm.name.includes('Editor Terminal'), 'Terminal name should indicate Editor Terminal');
     createdTerm.dispose();
 
-    // Test openFile message with existing SPEC.md
+    // Test openFile message with existing README.md
     const editorPromise = new Promise<vscode.TextEditor>((resolve) => {
       const sub = vscode.window.onDidChangeActiveTextEditor((editor) => {
-        if (editor && editor.document.fileName.endsWith('SPEC.md')) {
+        if (editor && editor.document.fileName.endsWith('README.md')) {
           sub.dispose();
           resolve(editor);
         }
       });
     });
-    messageListener!({ type: 'openFile', path: 'SPEC.md', line: 10, col: 1 });
+    messageListener!({ type: 'openFile', path: 'README.md', line: 10, col: 1 });
     await editorPromise;
 
     let activeEditor = vscode.window.activeTextEditor;
@@ -131,8 +131,8 @@ suite('Secondary Terminal Extension Test Suite', () => {
       activeEditor = vscode.window.activeTextEditor;
     }
 
-    assert.ok(activeEditor, 'SPEC.md should be opened in active editor');
-    assert.ok(activeEditor.document.fileName.endsWith('SPEC.md'), 'Active editor file should be SPEC.md');
+    assert.ok(activeEditor, 'README.md should be opened in active editor');
+    assert.ok(activeEditor.document.fileName.endsWith('README.md'), 'Active editor file should be README.md');
     assert.strictEqual(activeEditor.selection.active.line, 9, 'Cursor should be on line 10 (0-indexed 9)');
 
     // Scheme allowlisting is exercised without launching the system browser.

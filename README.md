@@ -2,7 +2,7 @@
 
 An independent sidebar terminal that runs alongside VS Code's built-in integrated terminal. Dock its view in the **Secondary Side Bar** to keep both available at once.
 
-Side Terminal uses xterm and native PTYs for interactive shells, multiple tabs, ANSI output, resize, and clickable file/URL links. It does not move your built-in Terminal view or change your global terminal settings.
+Side Terminal uses xterm and native PTYs (`node-pty`) for interactive shells, multiple tabs, ANSI output, resize, and clickable file/URL links. It operates independently: it does not move your built-in Terminal view, relocate other panels, or change global terminal settings.
 
 ## Setup
 
@@ -13,9 +13,17 @@ Side Terminal uses xterm and native PTYs for interactive shells, multiple tabs, 
 
 The extension requires Workspace Trust and a filesystem workspace. Its native PTY must be available for the host OS/architecture; failures are reported instead of falling back to a non-interactive pipe.
 
+## Architecture & Reliability
+
+- **Dedicated PTY Backend**: Side Terminal spawns owned PTY processes directly via `node-pty`. Sessions are private and not exposed via `vscode.window.terminals`.
+- **Bounded Output & Backpressure**: Output is queued and acknowledged only after xterm parses each batch. The PTY automatically pauses when queued output reaches 128 KB and resumes when drained below 64 KB (max 256 KB queue limit), preventing renderer lockups under high-throughput output.
+- **View Lifecycle & Replay**: Hiding or switching panels preserves running sessions. Recreating the webview view restores existing tab identities and replays unacknowledged batches and bounded recent history.
+- **Dynamic Tab Titles**: Tab titles reflect the currently running foreground command (e.g., `codex`, `agy`, `git`, `npm`) or shell name when idle, with debouncing to prevent UI flicker on rapid sub-second commands.
+- **Terminal File & Web Links**: Detects relative workspace paths, compiler formats (`file:line:col`), quoted paths, Windows drive letters, and HTTP/HTTPS URLs. Privileged URL schemes (`command:`, `file:`) are rejected.
+
 ## Settings
 
-Appearance follows the corresponding `terminal.integrated.*` settings and editor font defaults. Existing `secondaryTerminal.*` appearance settings take precedence only when you explicitly configure them.
+Appearance follows the corresponding `terminal.integrated.*` settings and editor font defaults. Existing `secondaryTerminal.*` appearance settings take precedence only when explicitly configured.
 
 | Side Terminal override | Native setting |
 | --- | --- |
@@ -30,28 +38,40 @@ Validated ranges: font size 6–100 px, line height 1–3, scrollback 0–100,00
 
 Shell launch uses your configured native default profile, path, arguments, profile environment, platform terminal environment, and terminal working directory. `${env:NAME}`, `${userHome}`, and `${workspaceFolder}` substitutions are supported. For unsupported automatic/source-based profiles, configure an explicit executable path in `terminal.integrated.profiles.<platform>`.
 
-## Commands
+## Commands & Keybindings
 
-| Action | macOS | Windows/Linux |
-| --- | --- | --- |
-| Focus Side Terminal | Cmd+Alt+T | Ctrl+Alt+T |
-| Create a native editor terminal | Cmd+Alt+E | Ctrl+Alt+E |
-| Previous/next side tab | Alt+[ / Alt+] | Alt+[ / Alt+] |
+| Action | Command ID | macOS | Windows/Linux |
+| --- | --- | --- | --- |
+| Focus Side Terminal | `secondaryTerminal.show` | Cmd+Alt+T | Ctrl+Alt+T |
+| Toggle Side Terminal | `secondaryTerminal.toggle` | — | — |
+| Create Native Editor Terminal | `secondaryTerminal.openEditorTerminal` | Cmd+Alt+E | Ctrl+Alt+E |
+| Previous/next tab | — | Alt+[ / Alt+] | Alt+[ / Alt+] |
 
-The editor action creates a fresh native terminal. It does not move the current side-terminal session.
+The editor action creates a fresh native terminal in the editor area; it does not move the current side-terminal session.
 
-## Coding agents
+## Coding Agents & Mirroring
 
-Run interactive agent CLIs directly in a local Side Terminal tab. They use the owned PTY; other extensions cannot discover these private processes through `vscode.window.terminals`.
+Run interactive agent CLIs (e.g., `agy`, `codex`, `aider`) directly in a local Side Terminal tab as an owned interactive session.
 
-`secondaryTerminal.mirrorAgentTerminals` optionally monitors recognized native agent terminals. Mirrors are read-only and require VS Code 1.93+ with working shell integration. They show execution output, not a synchronized native terminal screen. Use the original terminal for interactive prompts and TUIs.
+`secondaryTerminal.mirrorAgentTerminals` optionally monitors recognized native agent terminals (Cline, Roo, Copilot, Antigravity, Claude, Codex, Aider):
+- Mirrors are read-only and require VS Code 1.93+ with shell integration.
+- They stream execution output and update tab titles on execution start/end.
+- Closing a mirror tab hides the view without terminating the underlying native agent terminal.
 
-Closing a monitor hides its tab and leaves the source session running.
+## Explicit Limits & Boundaries
 
-Native command decorations, task/debug integration, and reconnection across extension-host restarts are not implemented. See [SPEC.md](SPEC.md) for the contract and deferred capabilities.
+- **Native Terminal Services**: Command decorations, task/debug terminal identity, shell integration terminal environment collections, and persistent session reconnects across VS Code window reloads are not provided.
+- **Alternate Screen Replay**: Recreating a view replays bounded recent output; full-screen TUI apps (e.g., `vim`, `htop`) may require redrawing after view recreation.
+- **Split Panes**: Multi-tab layout is supported; split panes within a tab are deferred.
 
-## Development
+## Development & Testing
 
-Use Node.js 18 or newer. Run `npm ci`, then `npm run lint`, `npm run compile`, and `npm test`. `npm run watch` rebuilds both extension and webview. `npm run package` produces minified bundles; `vscode:prepublish` invokes it when packaging a VSIX.
+Requires Node.js 18+.
 
-Tests include isolated regressions, a real PTY smoke check, and VS Code integration checks. See [validation evidence](docs/VALIDATION.md) for results and remaining platform/agent checks.
+- `npm run lint`: Type-checks codebase (`tsc --noEmit`).
+- `npm run compile`: Builds extension and webview bundles using `esbuild`.
+- `npm run watch`: Watches and rebuilds extension and webview during development.
+- `npm run test:unit`: Runs isolated regression suite (33 tests covering backpressure flow control, PTY drain, link parsing, profile resolution, and tab title updates).
+- `npm test`: Runs VS Code Electron integration test suite.
+- `node test/browser/serve.cjs`: Launches standalone browser fixture to test webview rendering, accessibility, and high-throughput ANSI output independently.
+- `npm run package`: Generates production minified bundles for VSIX packaging.
