@@ -16,6 +16,9 @@ const extension = {
   external: ['vscode', 'node-pty'],
   format: 'cjs',
   platform: 'node',
+  target: 'node18',
+  treeShaking: true,
+  legalComments: 'none',
   minify,
 };
 
@@ -25,6 +28,9 @@ const webview = {
   outfile: join(root, 'dist/webview.js'),
   format: 'iife',
   platform: 'browser',
+  target: 'es2022',
+  treeShaking: true,
+  legalComments: 'none',
   minify,
 };
 

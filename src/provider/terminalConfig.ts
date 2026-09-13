@@ -105,10 +105,20 @@ export function getShellLaunchOptions(): { shell: string; args: string[]; cwd: s
   function applyEnvironment(values: Record<string, string | null> | null | undefined) {
     if (!values || typeof values !== 'object') return;
     for (const [key, value] of Object.entries(values)) {
-      if (platform === 'win32') for (const existing of Object.keys(env)) if (existing.toLowerCase() === key.toLowerCase()) delete env[existing];
-      if (value === null) delete env[key];
-      else if (typeof value === 'string') env[key] = expand(value);
-      else throw new Error(`Invalid environment value for ${key}.`);
+      if (platform === 'win32') {
+        for (const existing of Object.keys(env)) {
+          if (existing.toLowerCase() === key.toLowerCase()) {
+            delete env[existing];
+          }
+        }
+      }
+      if (value === null) {
+        delete env[key];
+      } else if (typeof value === 'string') {
+        env[key] = expand(value);
+      } else {
+        throw new Error(`Invalid environment value for ${key}.`);
+      }
     }
   }
   applyEnvironment(native.get<Record<string, string | null>>(`env.${platformKey}`, {}));

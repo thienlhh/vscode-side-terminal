@@ -30,32 +30,31 @@ const MAX_TERMINAL_COLS = 1000;
 const MAX_TERMINAL_ROWS = 500;
 const MAX_LINE_OR_COLUMN = 1_000_000;
 
+const STANDARD_USER_SHELLS = new Set([
+  'zsh',
+  'bash',
+  'sh',
+  'fish',
+  'pwsh',
+  'powershell',
+  'cmd',
+  'tmux',
+  'javascript debug terminal',
+  'node',
+  'python',
+  'ruby',
+  'git bash'
+]);
+
+const RECOGNIZED_AGENT_REGEX = /(?:^|\b)(?:cline|copilot|roo(?:\s*code)?|agent|antigravity|claude|codex|aider)(?:\b|$)/i;
+
 /**
  * Determines if a terminal belongs to an AI agent rather than a standard user interactive shell.
  */
 function isRecognizedAgentTerminal(term: vscode.Terminal): boolean {
   const name = term.name.toLowerCase().trim();
-  const standardShells = new Set([
-    'zsh',
-    'bash',
-    'sh',
-    'fish',
-    'pwsh',
-    'powershell',
-    'cmd',
-    'tmux',
-    'javascript debug terminal',
-    'node',
-    'python',
-    'ruby',
-    'git bash'
-  ]);
-
-  // Exclude standard user shells
-  if (standardShells.has(name)) return false;
-
-  // Only match recognized AI agents or task runners
-  return /(?:^|\b)(?:cline|copilot|roo(?:\s*code)?|agent|antigravity|claude|codex|aider)(?:\b|$)/i.test(name);
+  if (STANDARD_USER_SHELLS.has(name)) return false;
+  return RECOGNIZED_AGENT_REGEX.test(name);
 }
 
 interface LocalSession {
@@ -94,6 +93,25 @@ function appendHistory(history: string, data: string): string {
 }
 
 const fileExists = (filePath: string): Promise<boolean> => fs.promises.access(filePath).then(() => true, () => false);
+
+function normalizeFilePath(rawPath: string): string {
+  let targetPath = rawPath.trim().replace(/^["'(\[]+|["')\]]+$/g, '').trim();
+
+  // Normalize home directory tilde paths (~/...)
+  if (targetPath === '~' || targetPath.startsWith('~/') || targetPath.startsWith('~\\')) {
+    targetPath = path.join(os.homedir(), targetPath.slice(targetPath.startsWith('~') && targetPath.length > 1 ? 2 : 1));
+  }
+
+  // Handle Git Bash / MSYS / WSL drive letters on Windows (e.g. /c/path or /mnt/c/path)
+  if (process.platform === 'win32') {
+    const driveMatch = targetPath.match(/^\/(?:mnt\/)?([a-zA-Z])\/(.*)$/);
+    if (driveMatch) {
+      targetPath = `${driveMatch[1]}:\\${driveMatch[2].replace(/\//g, '\\')}`;
+    }
+  }
+
+  return targetPath;
+}
 
 export class TerminalViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   public static readonly viewType = 'secondary-terminal.view';
@@ -553,94 +571,84 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider, vscode.
 
   private async _handleOpenFile(filePath: string, line?: number, col?: number): Promise<void> {
     try {
-      let targetPath = filePath.trim();
-      targetPath = targetPath.replace(/^["'(\[]+|["')\]]+$/g, '').trim();
-
-      // Normalize home directory tilde paths (~/...)
-      if (targetPath === '~' || targetPath.startsWith('~/') || targetPath.startsWith('~\\')) {
-        targetPath = path.join(os.homedir(), targetPath.slice(targetPath.startsWith('~') && targetPath.length > 1 ? 2 : 1));
-      }
-
-      // Handle Git Bash / MSYS / WSL drive letters on Windows (e.g. /c/path or /mnt/c/path)
-      if (process.platform === 'win32') {
-        const driveMatch = targetPath.match(/^\/(?:mnt\/)?([a-zA-Z])\/(.*)$/);
-        if (driveMatch) {
-          targetPath = `${driveMatch[1]}:\\${driveMatch[2].replace(/\//g, '\\')}`;
-        }
-      }
-
-      let resolvedUri: vscode.Uri | null = null;
-      if (path.isAbsolute(targetPath)) {
-        if (await fileExists(targetPath)) {
-          resolvedUri = vscode.Uri.file(targetPath);
-        }
-      } else {
-        const folders = vscode.workspace.workspaceFolders;
-        if (folders && folders.length > 0) {
-          for (const folder of folders) {
-            const folderPath = folder?.uri?.fsPath ?? (folder as any)?.fsPath;
-            if (!folderPath) continue;
-            const candidate = path.join(folderPath, targetPath);
-            if (await fileExists(candidate)) {
-              resolvedUri = vscode.Uri.file(candidate);
-              break;
-            }
-          }
-        } else {
-          const candidate = path.resolve(process.cwd(), targetPath);
-          if (await fileExists(candidate)) {
-            resolvedUri = vscode.Uri.file(candidate);
-          }
-        }
-      }
-
-      // Fallback search across workspace folders if relative path was from a subfolder or package
-      if (!resolvedUri && !path.isAbsolute(targetPath) && vscode.workspace.workspaceFolders?.length) {
-        const cleanRelative = targetPath.replace(/^(\.[\\/])+/, '').replace(/\\/g, '/');
-        try {
-          const pattern = `**/${cleanRelative}`;
-          const matches = await vscode.workspace.findFiles(pattern, '**/node_modules/**', 2);
-          if (matches && matches.length > 0) {
-            resolvedUri = matches[0];
-          }
-        } catch {
-          // Ignore glob errors
-        }
-      }
-
+      const targetPath = normalizeFilePath(filePath);
+      const resolvedUri = await this._resolveFileUri(targetPath);
       if (resolvedUri) {
-        // Reveal directory if target is a folder
-        const stat = await fs.promises.stat(resolvedUri.fsPath).catch(() => null);
-        if (stat?.isDirectory()) {
-          await vscode.commands.executeCommand('revealInExplorer', resolvedUri);
-          return;
-        }
-
-        const lineNum = Math.max(0, (typeof line === 'number' && Number.isFinite(line) ? line : 1) - 1);
-        const colNum = Math.max(0, (typeof col === 'number' && Number.isFinite(col) ? col : 1) - 1);
-        const position = new vscode.Position(lineNum, colNum);
-        const selection = new vscode.Range(position, position);
-
-        try {
-          const doc = await vscode.workspace.openTextDocument(resolvedUri);
-          const editor = await vscode.window.showTextDocument(doc, {
-            selection,
-            preview: false
-          });
-          editor.selection = new vscode.Selection(position, position);
-          editor.revealRange(selection, vscode.TextEditorRevealType.InCenter);
-        } catch {
-          // Fall back to general open for binary files, images, or custom editors
-          await vscode.commands.executeCommand('vscode.open', resolvedUri, {
-            selection,
-            preview: false
-          });
-        }
+        await this._openResolvedUri(resolvedUri, line, col);
       } else {
         void vscode.window.showWarningMessage(`Could not locate file: ${filePath}`);
       }
     } catch (err) {
       console.error('Failed to open file:', err);
+    }
+  }
+
+  private async _resolveFileUri(targetPath: string): Promise<vscode.Uri | null> {
+    if (path.isAbsolute(targetPath)) {
+      return (await fileExists(targetPath)) ? vscode.Uri.file(targetPath) : null;
+    }
+
+    const folders = vscode.workspace.workspaceFolders;
+    if (folders && folders.length > 0) {
+      for (const folder of folders) {
+        const folderPath = folder?.uri?.fsPath ?? (folder as any)?.fsPath;
+        if (!folderPath) continue;
+        const candidate = path.join(folderPath, targetPath);
+        if (await fileExists(candidate)) {
+          return vscode.Uri.file(candidate);
+        }
+      }
+    } else {
+      const candidate = path.resolve(process.cwd(), targetPath);
+      if (await fileExists(candidate)) {
+        return vscode.Uri.file(candidate);
+      }
+    }
+
+    // Fallback search across workspace folders if relative path was from a subfolder or package
+    if (folders && folders.length > 0) {
+      const cleanRelative = targetPath.replace(/^(\.[\\/])+/, '').replace(/\\/g, '/');
+      try {
+        const pattern = `**/${cleanRelative}`;
+        const matches = await vscode.workspace.findFiles(pattern, '**/node_modules/**', 2);
+        if (matches && matches.length > 0) {
+          return matches[0];
+        }
+      } catch {
+        // Ignore glob errors
+      }
+    }
+
+    return null;
+  }
+
+  private async _openResolvedUri(resolvedUri: vscode.Uri, line?: number, col?: number): Promise<void> {
+    // Reveal directory if target is a folder
+    const stat = await fs.promises.stat(resolvedUri.fsPath).catch(() => null);
+    if (stat?.isDirectory()) {
+      await vscode.commands.executeCommand('revealInExplorer', resolvedUri);
+      return;
+    }
+
+    const lineNum = Math.max(0, (typeof line === 'number' && Number.isFinite(line) ? line : 1) - 1);
+    const colNum = Math.max(0, (typeof col === 'number' && Number.isFinite(col) ? col : 1) - 1);
+    const position = new vscode.Position(lineNum, colNum);
+    const selection = new vscode.Range(position, position);
+
+    try {
+      const doc = await vscode.workspace.openTextDocument(resolvedUri);
+      const editor = await vscode.window.showTextDocument(doc, {
+        selection,
+        preview: false
+      });
+      editor.selection = new vscode.Selection(position, position);
+      editor.revealRange(selection, vscode.TextEditorRevealType.InCenter);
+    } catch {
+      // Fall back to general open for binary files, images, or custom editors
+      await vscode.commands.executeCommand('vscode.open', resolvedUri, {
+        selection,
+        preview: false
+      });
     }
   }
 

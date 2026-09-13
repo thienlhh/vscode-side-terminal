@@ -40,6 +40,13 @@ interface TabBuffer {
 
 type SendOutput = (message: OutputMessage) => void | boolean | Thenable<boolean>;
 
+function adjustForSurrogatePair(text: string, length: number): number {
+  if (length > 0 && length < text.length && /[\uD800-\uDBFF]/.test(text[length - 1]) && /[\uDC00-\uDFFF]/.test(text[length])) {
+    return length - 1;
+  }
+  return length;
+}
+
 /**
  * Batches terminal output and allows only one unacknowledged batch per tab.
  * The caller should pause its producer while `onBackpressureChange` is true.
@@ -76,15 +83,18 @@ export class OutputBuffer {
     const buffer = this.buffers.get(tabId) ?? this.createBuffer(tabId);
     const capacity = Math.max(0, this.maxQueuedBytes - buffer.queuedBytes);
     const markerBytes = buffer.markerQueued || buffer.pendingTruncation ? 0 : OutputBuffer.truncationMarker.length;
-    let available = data.length <= capacity
+    const rawAvailable = data.length <= capacity
       ? capacity
       : Math.max(0, capacity - markerBytes);
-    if (available > 0 && available < data.length && /[\uD800-\uDBFF]/.test(data[available - 1]) && /[\uDC00-\uDFFF]/.test(data[available])) {
-      available--;
-    }
+    const available = adjustForSurrogatePair(data, rawAvailable);
     if (available > 0) {
       const accepted = data.slice(0, available);
-      buffer.queue.push({ data: accepted, marker: false });
+      const last = buffer.queue[buffer.queue.length - 1];
+      if (last && !last.marker && last.data.length + accepted.length <= this.maxBatchBytes) {
+        last.data += accepted;
+      } else {
+        buffer.queue.push({ data: accepted, marker: false });
+      }
       buffer.queuedBytes += accepted.length;
     }
     if (data.length > available) {
@@ -213,10 +223,7 @@ export class OutputBuffer {
         buffer.queuedBytes -= chunk.length;
         if (marker) buffer.markerQueued = false;
       } else {
-        let sliceLen = room;
-        if (sliceLen > 0 && sliceLen < chunk.length && /[\uD800-\uDBFF]/.test(chunk[sliceLen - 1]) && /[\uDC00-\uDFFF]/.test(chunk[sliceLen])) {
-          sliceLen--;
-        }
+        const sliceLen = adjustForSurrogatePair(chunk, room);
         if (sliceLen === 0) break;
         data += chunk.slice(0, sliceLen);
         buffer.queue[0].data = chunk.slice(sliceLen);

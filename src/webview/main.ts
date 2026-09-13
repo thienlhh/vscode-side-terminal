@@ -56,27 +56,24 @@ clearTabBtn?.addEventListener('click', () => {
   }
 });
 
-function getComputedColor(varName: string, fallback: string): string {
-  const val = getComputedStyle(document.body).getPropertyValue(varName).trim();
-  return val || fallback;
-}
-
 function getTerminalTheme(): ITheme {
   const isLight = document.body.classList.contains('vscode-light');
+  const style = getComputedStyle(document.body);
+  const getProp = (varName: string, fallback: string) => style.getPropertyValue(varName).trim() || fallback;
 
-  const bg = getComputedColor(
+  const bg = getProp(
     '--vscode-terminal-background',
-    getComputedColor('--vscode-editor-background', isLight ? '#ffffff' : '#181818')
+    getProp('--vscode-editor-background', isLight ? '#ffffff' : '#181818')
   );
-  const fg = getComputedColor(
+  const fg = getProp(
     '--vscode-terminal-foreground',
-    getComputedColor('--vscode-editor-foreground', isLight ? '#222222' : '#cccccc')
+    getProp('--vscode-editor-foreground', isLight ? '#222222' : '#cccccc')
   );
-  const cursor = getComputedColor(
+  const cursor = getProp(
     '--vscode-terminalCursor-foreground',
     isLight ? '#000000' : '#ffffff'
   );
-  const selection = getComputedColor(
+  const selection = getProp(
     '--vscode-terminal-selectionBackground',
     isLight ? 'rgba(0, 0, 0, 0.18)' : 'rgba(255, 255, 255, 0.2)'
   );
@@ -86,22 +83,22 @@ function getTerminalTheme(): ITheme {
     foreground: fg,
     cursor,
     selectionBackground: selection,
-    black: getComputedColor('--vscode-terminal-ansiBlack', isLight ? '#000000' : '#000000'),
-    red: getComputedColor('--vscode-terminal-ansiRed', '#cd3131'),
-    green: getComputedColor('--vscode-terminal-ansiGreen', '#0dbc79'),
-    yellow: getComputedColor('--vscode-terminal-ansiYellow', '#e5e510'),
-    blue: getComputedColor('--vscode-terminal-ansiBlue', '#2472c8'),
-    magenta: getComputedColor('--vscode-terminal-ansiMagenta', '#bc3fbc'),
-    cyan: getComputedColor('--vscode-terminal-ansiCyan', '#11a8cd'),
-    white: getComputedColor('--vscode-terminal-ansiWhite', isLight ? '#e5e5e5' : '#e5e5e5'),
-    brightBlack: getComputedColor('--vscode-terminal-ansiBrightBlack', '#666666'),
-    brightRed: getComputedColor('--vscode-terminal-ansiBrightRed', '#f14c4c'),
-    brightGreen: getComputedColor('--vscode-terminal-ansiBrightGreen', '#23d18b'),
-    brightYellow: getComputedColor('--vscode-terminal-ansiBrightYellow', '#f5f543'),
-    brightBlue: getComputedColor('--vscode-terminal-ansiBrightBlue', '#3b8eea'),
-    brightMagenta: getComputedColor('--vscode-terminal-ansiBrightMagenta', '#d670d6'),
-    brightCyan: getComputedColor('--vscode-terminal-ansiBrightCyan', '#29b8db'),
-    brightWhite: getComputedColor('--vscode-terminal-ansiBrightWhite', '#ffffff')
+    black: getProp('--vscode-terminal-ansiBlack', '#000000'),
+    red: getProp('--vscode-terminal-ansiRed', '#cd3131'),
+    green: getProp('--vscode-terminal-ansiGreen', '#0dbc79'),
+    yellow: getProp('--vscode-terminal-ansiYellow', '#e5e510'),
+    blue: getProp('--vscode-terminal-ansiBlue', '#2472c8'),
+    magenta: getProp('--vscode-terminal-ansiMagenta', '#bc3fbc'),
+    cyan: getProp('--vscode-terminal-ansiCyan', '#11a8cd'),
+    white: getProp('--vscode-terminal-ansiWhite', '#e5e5e5'),
+    brightBlack: getProp('--vscode-terminal-ansiBrightBlack', '#666666'),
+    brightRed: getProp('--vscode-terminal-ansiBrightRed', '#f14c4c'),
+    brightGreen: getProp('--vscode-terminal-ansiBrightGreen', '#23d18b'),
+    brightYellow: getProp('--vscode-terminal-ansiBrightYellow', '#f5f543'),
+    brightBlue: getProp('--vscode-terminal-ansiBrightBlue', '#3b8eea'),
+    brightMagenta: getProp('--vscode-terminal-ansiBrightMagenta', '#d670d6'),
+    brightCyan: getProp('--vscode-terminal-ansiBrightCyan', '#29b8db'),
+    brightWhite: getProp('--vscode-terminal-ansiBrightWhite', '#ffffff')
   };
 }
 
@@ -137,7 +134,8 @@ themeObserver.observe(document.body, { attributes: true, attributeFilter: ['clas
 
 interface LogicalLine {
   text: string;
-  charMap: Array<{ x: number; y: number }>;
+  charMapX: number[];
+  charMapY: number[];
   startY: number;
   endY: number;
 }
@@ -157,7 +155,9 @@ function getLogicalLine(term: Terminal, bufferLineNumber: number): LogicalLine |
     endY++;
   }
 
-  const charMap: Array<{ x: number; y: number }> = [];
+  const nullCell = term.buffer.active.getNullCell();
+  const charMapX: number[] = [];
+  const charMapY: number[] = [];
   let logicalText = '';
 
   for (let y = startY; y <= endY; y++) {
@@ -169,7 +169,7 @@ function getLogicalLine(term: Terminal, bufferLineNumber: number): LogicalLine |
 
     let textOffset = 0;
     for (let cellIndex = 0; cellIndex < line.length; cellIndex++) {
-      const cell = line.getCell(cellIndex);
+      const cell = line.getCell(cellIndex, nullCell);
       if (!cell) continue;
       const chars = cell.getChars() || (cell.getWidth() > 0 ? ' '.repeat(cell.getWidth()) : '');
       if (!chars) continue;
@@ -177,8 +177,11 @@ function getLogicalLine(term: Terminal, bufferLineNumber: number): LogicalLine |
       if (textOffset >= lineStr.length) break;
 
       const takeChars = Math.min(chars.length, lineStr.length - textOffset);
+      const posX = cellIndex + 1;
+      const posY = y + 1;
       for (let ci = 0; ci < takeChars; ci++) {
-        charMap.push({ x: cellIndex + 1, y: y + 1 });
+        charMapX.push(posX);
+        charMapY.push(posY);
       }
       textOffset += chars.length;
     }
@@ -187,7 +190,8 @@ function getLogicalLine(term: Terminal, bufferLineNumber: number): LogicalLine |
 
   return {
     text: logicalText,
-    charMap,
+    charMapX,
+    charMapY,
     startY: startY + 1,
     endY: endY + 1
   };
@@ -210,26 +214,31 @@ function registerCustomLinkProvider(term: Terminal) {
         return;
       }
 
-      const { text: lineText, charMap } = logical;
+      const { text: lineText, charMapX, charMapY } = logical;
       const links: ILink[] = [];
       const cols = Math.max(1, term.cols);
+      const totalChars = charMapX.length;
+
+      const toRange = (startIndex: number, length: number) => {
+        const endIndex = startIndex + length - 1;
+        if (startIndex < 0 || endIndex >= totalChars) return null;
+        const start = { x: charMapX[startIndex], y: charMapY[startIndex] };
+        const end = { x: charMapX[endIndex], y: charMapY[endIndex] };
+        if (bufferLineNumber < start.y || bufferLineNumber > end.y) return null;
+        return { start, end };
+      };
 
       // 1. Detect Web URLs (http:// or https://)
       const urlRegex = /(https?:\/\/[^\s"'`<>()[\]{}]+)/g;
       let match: RegExpExecArray | null;
       while ((match = urlRegex.exec(lineText)) !== null) {
         const url = match[1];
-        const startIndex = match.index;
-        const endIndex = startIndex + url.length - 1;
-        if (startIndex >= charMap.length || endIndex >= charMap.length) continue;
-
-        const start = charMap[startIndex];
-        const end = charMap[endIndex];
-        if (bufferLineNumber < start.y || bufferLineNumber > end.y) continue;
+        const range = toRange(match.index, url.length);
+        if (!range) continue;
 
         links.push({
           text: url,
-          range: { start, end },
+          range,
           decorations: {
             pointerCursor: true,
             underline: true
@@ -242,15 +251,8 @@ function registerCustomLinkProvider(term: Terminal) {
 
       // 2. Detect file paths with optional line/col coordinates
       for (const fileLink of parseTerminalFileLinks(lineText)) {
-        const startIndex = fileLink.startX - 1;
-        const endIndex = startIndex + fileLink.text.length - 1;
-        if (startIndex < 0 || startIndex >= charMap.length || endIndex >= charMap.length) continue;
-
-        const start = charMap[startIndex];
-        const end = charMap[endIndex];
-        if (bufferLineNumber < start.y || bufferLineNumber > end.y) continue;
-
-        const range = { start, end };
+        const range = toRange(fileLink.startX - 1, fileLink.text.length);
+        if (!range) continue;
         if (links.some((existing) => rangesOverlap(existing.range, range, cols))) continue;
 
         links.push({
@@ -393,7 +395,7 @@ function switchTab(id: string) {
   tabs.forEach((tab, tabId) => {
     if (tabId === id) {
       tab.element.style.display = 'block';
-      setTimeout(() => {
+      requestAnimationFrame(() => {
         if (activeTabId !== id || !tabs.has(id)) return;
         try {
           tab.fitAddon.fit();
@@ -407,7 +409,7 @@ function switchTab(id: string) {
         } catch {
           // Ignore
         }
-      }, 50);
+      });
     } else {
       tab.element.style.display = 'none';
     }
@@ -420,6 +422,7 @@ function disposeTab(id: string, notifyHost: boolean) {
   const tab = tabs.get(id);
   if (!tab) return;
 
+  try { tab.fitAddon.dispose(); } catch { /* ignore */ }
   tab.term.dispose();
   tab.element.remove();
   tabs.delete(id);
@@ -517,26 +520,25 @@ window.addEventListener('keydown', (e) => {
     const currentIndex = tabIds.indexOf(activeTabId);
     if (currentIndex === -1) return;
 
-    if (e.key === '[' || e.key === 'ArrowLeft') {
-      const prevIndex = (currentIndex - 1 + tabIds.length) % tabIds.length;
-      switchTab(tabIds[prevIndex]);
-      e.preventDefault();
-      e.stopPropagation();
-    } else {
-      const nextIndex = (currentIndex + 1) % tabIds.length;
-      switchTab(tabIds[nextIndex]);
-      e.preventDefault();
-      e.stopPropagation();
-    }
+    const offset = (e.key === '[' || e.key === 'ArrowLeft') ? -1 : 1;
+    const targetIndex = (currentIndex + offset + tabIds.length) % tabIds.length;
+    switchTab(tabIds[targetIndex]);
+    e.preventDefault();
+    e.stopPropagation();
   }
 }, true);
 
 // Window resize listener
+let resizeRaf: number | null = null;
 window.addEventListener('resize', () => {
-  if (activeTabId && tabs.has(activeTabId)) {
-    const active = tabs.get(activeTabId)!;
-    active.fitAddon.fit();
-  }
+  if (resizeRaf !== null) cancelAnimationFrame(resizeRaf);
+  resizeRaf = requestAnimationFrame(() => {
+    resizeRaf = null;
+    if (activeTabId && tabs.has(activeTabId)) {
+      const active = tabs.get(activeTabId)!;
+      active.fitAddon.fit();
+    }
+  });
 });
 
 // Listen for messages from extension host
@@ -615,14 +617,15 @@ window.addEventListener('message', (event) => {
     case 'viewVisible': {
       if (activeTabId && tabs.has(activeTabId)) {
         const tab = tabs.get(activeTabId)!;
-        setTimeout(() => {
+        requestAnimationFrame(() => {
+          if (activeTabId !== tab.id || !tabs.has(tab.id)) return;
           try {
             tab.fitAddon.fit();
             tab.term.focus();
           } catch {
             // Ignore
           }
-        }, 50);
+        });
       }
       break;
     }

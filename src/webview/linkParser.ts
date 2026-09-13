@@ -8,6 +8,7 @@ export interface TerminalFileLink {
 }
 
 const KNOWN_EXTENSIONLESS_FILES = 'Makefile|Dockerfile|Containerfile|Procfile|Gemfile|Rakefile|CMakeLists\\.txt|LICENSE';
+const EXTENSIONLESS_FILE_REGEX = new RegExp(`^(?:${KNOWN_EXTENSIONLESS_FILES})$`, 'i');
 
 const FILE_LINK_REGEX = new RegExp(
   `(?:^|[\\s"'\`(\\[])((?:(?:[A-Za-z]:[\\\\/])|(?:\\/)|(?:~[\\\\/])|(?:\\.{1,2}[\\\\/]))?(?:[A-Za-z0-9_.+()-]+[\\\\/])*(?:[A-Za-z0-9_.+()-]*\\.[A-Za-z0-9_+-]+|${KNOWN_EXTENSIONLESS_FILES})(?::\\d+(?::\\d+)?:?|\\(\\d+(?:,\\s*\\d+)?\\):?|#L\\d+(?:C\\d+)?|#L\\d+-L\\d+)?)(\\b|(?=[,\\s"'\`\\)\\]}>;:]|$))`,
@@ -16,14 +17,34 @@ const FILE_LINK_REGEX = new RegExp(
 
 const QUOTED_FILE_LINK_REGEX = /(["'`])((?:[A-Za-z]:[\\/]|\\\\|\/|~[\\/]|(?:\.{1,2}[\\/]))?[^"'`\r\n]+?)\1(?:(?::\d+(?::\d+)?:?|\(\d+(?:,\s*\d+)?\):?|#L\d+(?:C\d+)?|#L\d+-L\d+)?|(?:,\s*line\s+\d+))?/g;
 
+const COORD_PATTERNS = [
+  /:(\d+):(\d+)$/,
+  /:(\d+)$/,
+  /\((\d+)(?:,\s*(\d+))?\)$/,
+  /#L(\d+)(?:C(\d+)|-L\d+)?$/,
+  /,\s*line\s+(\d+)$/i
+];
+
+const INVALID_FILE_PATHS = new Set(['.', '..', '/', '\\']);
+
 /** Finds file paths while preserving nested directories, Windows drive prefixes, and coordinates. */
 export function parseTerminalFileLinks(lineText: string): TerminalFileLink[] {
+  QUOTED_FILE_LINK_REGEX.lastIndex = 0;
+  FILE_LINK_REGEX.lastIndex = 0;
   const links: TerminalFileLink[] = [];
-  let match: RegExpExecArray | null;
 
+  const addLink = (link: TerminalFileLink | null) => {
+    if (!link) return;
+    const overlaps = links.some((item) => item.startX <= link.endX && item.endX >= link.startX);
+    if (!overlaps) {
+      links.push(link);
+    }
+  };
+
+  let match: RegExpExecArray | null;
   while ((match = QUOTED_FILE_LINK_REGEX.exec(lineText)) !== null) {
     const rawPath = match[2];
-    if (!rawPath.includes('/') && !rawPath.includes('\\') && !rawPath.includes('.') && !new RegExp(`^(?:${KNOWN_EXTENSIONLESS_FILES})$`, 'i').test(rawPath)) {
+    if (!rawPath.includes('/') && !rawPath.includes('\\') && !rawPath.includes('.') && !EXTENSIONLESS_FILE_REGEX.test(rawPath)) {
       continue;
     }
     const fullMatched = match[0];
@@ -31,20 +52,14 @@ export function parseTerminalFileLinks(lineText: string): TerminalFileLink[] {
     const afterQuote = fullMatched.slice(fullMatched.lastIndexOf(quote) + 1);
     const textToParse = rawPath + afterQuote;
     const startX = match.index + 2;
-    const link = createLink(textToParse, startX);
-    if (link && !links.some((item) => item.startX <= link.endX && item.endX >= link.startX)) {
-      links.push(link);
-    }
+    addLink(createLink(textToParse, startX));
   }
 
   while ((match = FILE_LINK_REGEX.exec(lineText)) !== null) {
     const text = match[1];
     if (!text) continue;
     const startX = match.index + match[0].indexOf(text) + 1;
-    const link = createLink(text, startX);
-    if (link && !links.some((item) => item.startX <= link.endX && item.endX >= link.startX)) {
-      links.push(link);
-    }
+    addLink(createLink(text, startX));
   }
 
   return links.sort((left, right) => left.startX - right.startX);
@@ -60,28 +75,17 @@ function createLink(text: string, startX: number): TerminalFileLink | null {
   let col: number | undefined;
   let filePath = cleanText;
 
-  let m = cleanText.match(/:(\d+):(\d+)$/);
-  if (m) {
-    line = Number(m[1]);
-    col = Number(m[2]);
-    filePath = cleanText.slice(0, m.index);
-  } else if ((m = cleanText.match(/:(\d+)$/))) {
-    line = Number(m[1]);
-    filePath = cleanText.slice(0, m.index);
-  } else if ((m = cleanText.match(/\((\d+)(?:,\s*(\d+))?\)$/))) {
-    line = Number(m[1]);
-    if (m[2]) col = Number(m[2]);
-    filePath = cleanText.slice(0, m.index);
-  } else if ((m = cleanText.match(/#L(\d+)(?:C(\d+)|-L\d+)?$/))) {
-    line = Number(m[1]);
-    if (m[2]) col = Number(m[2]);
-    filePath = cleanText.slice(0, m.index);
-  } else if ((m = cleanText.match(/,\s*line\s+(\d+)$/i))) {
-    line = Number(m[1]);
-    filePath = cleanText.slice(0, m.index);
+  for (const pattern of COORD_PATTERNS) {
+    const match = cleanText.match(pattern);
+    if (match) {
+      filePath = cleanText.slice(0, match.index);
+      line = Number(match[1]);
+      if (match[2]) col = Number(match[2]);
+      break;
+    }
   }
 
-  if (!filePath || filePath === '.' || filePath === '..' || filePath === '/' || filePath === '\\') {
+  if (!filePath || INVALID_FILE_PATHS.has(filePath)) {
     return null;
   }
 
