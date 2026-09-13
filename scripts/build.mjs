@@ -1,5 +1,5 @@
 import { build, context } from 'esbuild';
-import { copyFileSync, mkdirSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -38,10 +38,9 @@ const targets = extensionOnly ? [extension] : webviewOnly ? [webview] : [extensi
 
 function copyTerminalCss() {
   mkdirSync(join(root, 'dist'), { recursive: true });
-  copyFileSync(
-    join(root, 'node_modules/@xterm/xterm/css/xterm.css'),
-    join(root, 'dist/xterm.css'),
-  );
+  const rawCss = readFileSync(join(root, 'node_modules/@xterm/xterm/css/xterm.css'), 'utf8');
+  const patchedCss = rawCss.replace('background-color: #000;', 'background-color: transparent;');
+  writeFileSync(join(root, 'dist/xterm.css'), patchedCss);
 }
 
 if (watch) {

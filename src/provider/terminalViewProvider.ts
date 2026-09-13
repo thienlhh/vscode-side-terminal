@@ -46,6 +46,25 @@ const STANDARD_USER_SHELLS = new Set([
   'git bash'
 ]);
 
+const GENERIC_PROCESS_NAMES = new Set([
+  'node',
+  'python',
+  'python3',
+  'ruby',
+  'perl',
+  'sh',
+  'bash',
+  'zsh',
+  'fish',
+  'pwsh',
+  'powershell',
+  'cmd',
+  'sudo',
+  'env',
+  'deno',
+  'bun'
+]);
+
 const RECOGNIZED_AGENT_REGEX = /(?:^|\b)(?:cline|copilot|roo(?:\s*code)?|agent|antigravity|claude|codex|aider)(?:\b|$)/i;
 
 /**
@@ -60,11 +79,17 @@ function isRecognizedAgentTerminal(term: vscode.Terminal): boolean {
 interface LocalSession {
   id: string;
   title: string;
+  shellName: string;
   tabNumber: number;
   ptyProcess: import('node-pty').IPty;
   history: string;
+  cwd?: string;
   dataSubscription?: { dispose(): void };
   exitSubscription?: { dispose(): void };
+  pollInterval?: NodeJS.Timeout;
+  debounceTimer?: NodeJS.Timeout;
+  pendingTitle?: string;
+  lastOscCmd?: string;
 }
 
 interface AgentSession {
@@ -111,6 +136,11 @@ function normalizeFilePath(rawPath: string): string {
   }
 
   return targetPath;
+}
+
+function getBaseShellName(shellPath: string): string {
+  const base = path.basename(shellPath).replace(/\.exe$/i, '');
+  return base || 'terminal';
 }
 
 export class TerminalViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
@@ -258,6 +288,17 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider, vscode.
     );
     const event = vscode.window.onDidStartTerminalShellExecution;
     if (typeof event === 'function') this._subscriptions.push(event.call(vscode.window, (value) => void this._readShellExecution(value)));
+    const endEvent = (vscode.window as any).onDidEndTerminalShellExecution;
+    if (typeof endEvent === 'function') {
+      this._subscriptions.push(endEvent.call(vscode.window, (value: any) => {
+        if (!this._isMirroringEnabled() || !value?.terminal) return;
+        const tabId = this._agentIdsByTerminal.get(value.terminal);
+        const session = tabId ? this._agentSessions.get(tabId) : undefined;
+        if (session) {
+          this._updateSessionTitle(session, `🤖 ${value.terminal.name}`);
+        }
+      }));
+    }
   }
 
   private _handleMessage(raw: unknown): void {
@@ -352,7 +393,8 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider, vscode.
       return;
     }
     const tabId = `term-${Date.now()}-${this._nextSessionNumber++}`;
-    const title = `Terminal ${tabNumber}`;
+    const shellName = getBaseShellName(launchOptions.shell);
+    const title = shellName;
 
     let ptyProcess: import('node-pty').IPty;
     try {
@@ -361,15 +403,20 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider, vscode.
       void vscode.window.showErrorMessage(`Side Terminal could not start the configured shell: ${String(error)}`);
       return;
     }
-    const session: LocalSession = { id: tabId, title, tabNumber, ptyProcess, history: '' };
+    const session: LocalSession = { id: tabId, title, shellName, tabNumber, ptyProcess, history: '', cwd: launchOptions.cwd };
     this._localSessions.set(tabId, session);
+    session.pollInterval = setInterval(() => {
+      this._checkLocalSessionProcess(session);
+    }, 250);
     session.dataSubscription = ptyProcess.onData((data: string) => {
       if (this._localSessions.get(tabId) === session) {
         this._outputBuffer.append(tabId, data);
+        this._handleLocalSessionData(session, data);
       }
     });
     session.exitSubscription = ptyProcess.onExit(() => {
       if (this._localSessions.delete(tabId)) {
+        this._clearSessionTimers(session);
         this._outputBuffer.remove(tabId);
         session.dataSubscription?.dispose();
         session.exitSubscription?.dispose();
@@ -386,6 +433,7 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider, vscode.
     const session = this._localSessions.get(tabId);
     if (!session) return;
     this._localSessions.delete(tabId);
+    this._clearSessionTimers(session);
     try { session.ptyProcess.resume(); } catch { /* already exited */ }
     this._outputBuffer.remove(tabId);
     session.dataSubscription?.dispose();
@@ -393,6 +441,132 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider, vscode.
     try { session.ptyProcess.kill(); } catch { /* already exited */ }
     if (announce) this._postMessage({ type: 'removeTab', tabId });
     this._updateBadge();
+  }
+
+  private _clearSessionTimers(session: LocalSession): void {
+    if (session.pollInterval) {
+      clearInterval(session.pollInterval);
+      session.pollInterval = undefined;
+    }
+    if (session.debounceTimer) {
+      clearTimeout(session.debounceTimer);
+      session.debounceTimer = undefined;
+    }
+    session.pendingTitle = undefined;
+  }
+
+  private _isWorkspaceOrPathTitle(session: LocalSession, raw: string): boolean {
+    const normalized = raw.trim().toLowerCase();
+    if (!normalized) return false;
+    if (session.cwd) {
+      const cwdBase = path.basename(session.cwd).toLowerCase();
+      if (cwdBase && (normalized === cwdBase || normalized.startsWith(cwdBase) || cwdBase.startsWith(normalized.replace(/\.{2,}$/, '')))) {
+        return true;
+      }
+    }
+    const folders = vscode.workspace.workspaceFolders;
+    if (folders) {
+      for (const folder of folders) {
+        const folderName = folder.name.toLowerCase();
+        if (folderName && (normalized === folderName || normalized.startsWith(folderName) || folderName.startsWith(normalized.replace(/\.{2,}$/, '')))) {
+          return true;
+        }
+        const folderBase = path.basename(folder.uri.fsPath).toLowerCase();
+        if (folderBase && (normalized === folderBase || normalized.startsWith(folderBase) || folderBase.startsWith(normalized.replace(/\.{2,}$/, '')))) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private _isValidOscCommand(session: LocalSession, raw: string): boolean {
+    if (!raw) return false;
+    if (raw.includes('@') || raw.startsWith('/') || raw.startsWith('~') || raw.startsWith('..') || /^[a-zA-Z]:[/\\]/.test(raw)) {
+      return false;
+    }
+    if (/[\u2800-\u28ff]/.test(raw) || /(\.\.\.|…)$/.test(raw) || /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s*/.test(raw)) {
+      return false;
+    }
+    if (this._isWorkspaceOrPathTitle(session, raw)) {
+      return false;
+    }
+    return true;
+  }
+
+  private _handleLocalSessionData(session: LocalSession, data: string): void {
+    const oscRegex = /\x1b\][0-2];([^\x07\x1b]+)(?:\x07|\x1b\\)/g;
+    let match: RegExpExecArray | null;
+    while ((match = oscRegex.exec(data)) !== null) {
+      const raw = match[1].trim();
+      if (this._isValidOscCommand(session, raw)) {
+        session.lastOscCmd = raw;
+      }
+    }
+    this._checkLocalSessionProcess(session);
+  }
+
+  private _checkLocalSessionProcess(session: LocalSession): void {
+    let rawProc: string | undefined;
+    try {
+      rawProc = (session.ptyProcess as any)?.process;
+    } catch {
+      // Process may have exited
+    }
+    const rawProcName = typeof rawProc === 'string' ? path.basename(rawProc).replace(/\.exe$/i, '') : '';
+    const proc = rawProcName.toLowerCase();
+    const isIdle = !proc || proc === session.shellName.toLowerCase();
+
+    let targetTitle: string;
+    if (isIdle) {
+      targetTitle = session.shellName;
+      session.lastOscCmd = undefined;
+    } else if (proc && !GENERIC_PROCESS_NAMES.has(proc)) {
+      targetTitle = rawProcName;
+    } else if (session.lastOscCmd) {
+      const firstWord = session.lastOscCmd.split(/\s+/)[0];
+      targetTitle = firstWord || rawProcName;
+    } else {
+      targetTitle = rawProcName || session.shellName;
+    }
+
+    if (targetTitle === session.title) {
+      if (session.debounceTimer) {
+        clearTimeout(session.debounceTimer);
+        session.debounceTimer = undefined;
+        session.pendingTitle = undefined;
+      }
+      return;
+    }
+
+    if (isIdle) {
+      if (session.debounceTimer) {
+        clearTimeout(session.debounceTimer);
+        session.debounceTimer = undefined;
+      }
+      session.pendingTitle = undefined;
+      this._updateSessionTitle(session, targetTitle);
+      return;
+    }
+
+    if (session.pendingTitle === targetTitle) return;
+
+    if (session.debounceTimer) {
+      clearTimeout(session.debounceTimer);
+    }
+    session.pendingTitle = targetTitle;
+    session.debounceTimer = setTimeout(() => {
+      session.debounceTimer = undefined;
+      if (session.pendingTitle && this._localSessions.get(session.id) === session) {
+        this._updateSessionTitle(session, session.pendingTitle);
+      }
+    }, 150);
+  }
+
+  private _updateSessionTitle(session: LocalSession | AgentSession, newTitle: string): void {
+    if (session.title === newTitle) return;
+    session.title = newTitle;
+    this._postMessage({ type: 'updateTitle', tabId: session.id, title: newTitle });
   }
 
   private _isKnownTab(tabId: string): boolean {
@@ -513,13 +687,18 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider, vscode.
     if (!tabId || !event.execution || typeof event.execution.read !== 'function') return;
     const readerId = this._nextReaderId++;
     const generation = this._mirrorGeneration;
+    const session = this._agentSessions.get(tabId);
     try {
       const iterator = event.execution.read()[Symbol.asyncIterator]();
       this._cancelReaders(tabId);
       this._activeReaders.set(readerId, { tabId, iterator });
-      const commandLine = event.execution.commandLine?.value;
-      if (commandLine && this._isMirroringEnabled() && generation === this._mirrorGeneration) {
-        const marker = `\r\n\x1b[36m$ ${commandLine}\x1b[0m\r\n`;
+      const rawCommandLine = event.execution.commandLine?.value?.trim();
+      if (rawCommandLine && session) {
+        const firstWord = rawCommandLine.split(/\s+/)[0];
+        this._updateSessionTitle(session, `🤖 ${firstWord || rawCommandLine}`);
+      }
+      if (rawCommandLine && this._isMirroringEnabled() && generation === this._mirrorGeneration) {
+        const marker = `\r\n\x1b[36m$ ${rawCommandLine}\x1b[0m\r\n`;
         this._outputBuffer.append(tabId, marker);
       }
       for await (const chunk of { [Symbol.asyncIterator]: () => iterator }) {
@@ -532,6 +711,9 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider, vscode.
       // Shell streams close when their source terminal exits.
     } finally {
       this._activeReaders.delete(readerId);
+      if (session && this._agentSessions.has(tabId)) {
+        this._updateSessionTitle(session, `🤖 ${event.terminal.name}`);
+      }
     }
   }
 

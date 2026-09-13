@@ -33,6 +33,7 @@ class FakePty {
     this.resumeCount = 0;
     this.killCount = 0;
     this.writes = [];
+    this.process = 'zsh';
   }
 
   onData(listener) { return this.data.on(listener); }
@@ -51,7 +52,8 @@ function createEnvironment() {
     close: emitter(),
     theme: emitter(),
     config: emitter(),
-    shell: emitter()
+    shell: emitter(),
+    shellEnd: emitter()
   };
   const state = {
     trusted: true,
@@ -105,6 +107,7 @@ function createEnvironment() {
       onDidCloseTerminal: events.close.on,
       onDidChangeActiveColorTheme: events.theme.on,
       onDidStartTerminalShellExecution: events.shell.on,
+      onDidEndTerminalShellExecution: events.shellEnd.on,
       showErrorMessage(message) { state.errors.push(message); return Promise.resolve(); },
       showWarningMessage(message) { state.warnings.push(message); return Promise.resolve(); },
       showTextDocument(doc, options) {
@@ -393,3 +396,126 @@ serialTest('pauses noisy PTYs under output pressure and cleans them up on close'
   assert.equal(pty.killCount, 1);
   provider.dispose();
 });
+
+serialTest('updates local terminal tab title to reflect running command and reverts when idle', async () => {
+  const { environment, provider, firstView } = setup();
+  firstView.send({ type: 'ready' });
+  const id = tabId(firstView.messages, false);
+  const initialAdd = firstView.messages.find(m => m.type === 'addTab' && m.id === id);
+  assert.ok(initialAdd);
+  assert.equal(initialAdd.title, 'zsh', 'initial tab title must be the shell name');
+
+  const pty = environment.state.ptys[0];
+  pty.process = 'node';
+  pty.emitData('\x1b]2;npm test\x07');
+  await new Promise((resolve) => setTimeout(resolve, 200));
+
+  const updatedMsg = [...firstView.messages].reverse().find(m => m.type === 'updateTitle' && m.tabId === id);
+  assert.ok(updatedMsg, 'must emit updateTitle message when command runs');
+  assert.equal(updatedMsg.title, 'npm', 'tab title must reflect the running command');
+
+  pty.process = 'zsh';
+  pty.emitData('\x1b]2;user@host: ~/dir\x07');
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  const revertedMsg = [...firstView.messages].reverse().find(m => m.type === 'updateTitle' && m.tabId === id);
+  assert.ok(revertedMsg, 'must emit updateTitle message when command exits');
+  assert.equal(revertedMsg.title, 'zsh', 'tab title must revert to shell name when idle');
+
+  provider.dispose();
+});
+
+serialTest('reflects running command for codex ignoring workspace path OSC output', async () => {
+  const { environment, provider, firstView } = setup();
+  firstView.send({ type: 'ready' });
+  const id = tabId(firstView.messages, false);
+
+  const pty = environment.state.ptys[0];
+  pty.process = 'codex';
+  pty.emitData('\x1b]0;vscode-secondary-term...\x07');
+  pty.emitData('\x1b]0;⠋ vscode-secondary-term...\x07');
+  await new Promise((resolve) => setTimeout(resolve, 200));
+
+  const codexMsg = [...firstView.messages].reverse().find(m => m.type === 'updateTitle' && m.tabId === id);
+  assert.ok(codexMsg, 'must emit updateTitle message when codex runs');
+  assert.equal(codexMsg.title, 'codex', 'tab title must reflect running command (codex) instead of workspace path');
+
+  pty.process = 'zsh';
+  pty.emitData('\x1b]2;user@host: ~/dir\x07');
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  const revertedMsg = [...firstView.messages].reverse().find(m => m.type === 'updateTitle' && m.tabId === id);
+  assert.ok(revertedMsg, 'must emit updateTitle message when command exits');
+  assert.equal(revertedMsg.title, 'zsh', 'tab title must revert to shell name when idle');
+
+  provider.dispose();
+});
+
+serialTest('reflects running command for agy agent', async () => {
+  const { environment, provider, firstView } = setup();
+  firstView.send({ type: 'ready' });
+  const id = tabId(firstView.messages, false);
+
+  const pty = environment.state.ptys[0];
+  pty.process = 'agy';
+  pty.emitData('\x1b]2;agy agent\x07\x1b]1;agy\x07');
+  await new Promise((resolve) => setTimeout(resolve, 200));
+
+  const agyMsg = [...firstView.messages].reverse().find(m => m.type === 'updateTitle' && m.tabId === id);
+  assert.ok(agyMsg, 'must emit updateTitle message when agy runs');
+  assert.equal(agyMsg.title, 'agy', 'tab title must reflect running command (agy)');
+
+  provider.dispose();
+});
+
+serialTest('updates agent terminal tab title on shell execution and reverts on execution end', async () => {
+  const { environment, provider, firstView } = setup();
+  const agentTerm = { name: 'Claude', sendText() {}, show() {}, dispose() {} };
+  environment.state.terminals.push(agentTerm);
+  firstView.send({ type: 'ready' });
+
+  const agentId = tabId(firstView.messages, true);
+  assert.ok(agentId);
+  const initialAdd = firstView.messages.find(m => m.type === 'addTab' && m.id === agentId);
+  assert.equal(initialAdd.title, '🤖 Claude');
+
+  let executionEnded;
+  const iterator = {
+    [Symbol.asyncIterator]() {
+      return {
+        next() {
+          return new Promise((resolve) => {
+            executionEnded = resolve;
+          });
+        }
+      };
+    }
+  };
+
+  environment.events.shell.fire({
+    terminal: agentTerm,
+    execution: {
+      commandLine: { value: 'npm test --verbose' },
+      read: () => iterator
+    }
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const runningMsg = [...firstView.messages].reverse().find(m => m.type === 'updateTitle' && m.tabId === agentId);
+  assert.ok(runningMsg, 'must emit updateTitle when agent execution starts');
+  assert.equal(runningMsg.title, '🤖 npm', 'agent tab title must reflect the running command');
+
+  environment.events.shellEnd.fire({
+    terminal: agentTerm,
+    execution: { commandLine: { value: 'npm test --verbose' } }
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const endedMsg = [...firstView.messages].reverse().find(m => m.type === 'updateTitle' && m.tabId === agentId);
+  assert.ok(endedMsg, 'must emit updateTitle when agent execution ends');
+  assert.equal(endedMsg.title, '🤖 Claude', 'agent tab title must revert to agent name when done');
+
+  executionEnded?.({ done: true });
+  provider.dispose();
+});
+

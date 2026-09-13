@@ -63,7 +63,7 @@ function getTerminalTheme(): ITheme {
 
   const bg = getProp(
     '--vscode-terminal-background',
-    getProp('--vscode-editor-background', isLight ? '#ffffff' : '#181818')
+    getProp('--vscode-editor-background', isLight ? '#ffffff' : '#1e1e1e')
   );
   const fg = getProp(
     '--vscode-terminal-foreground',
@@ -104,12 +104,17 @@ function getTerminalTheme(): ITheme {
 
 function updateAllThemes() {
   const currentTheme = getTerminalTheme();
-  terminalContainerEl.style.backgroundColor = currentTheme.background || '#181818';
+  const bg = currentTheme.background || (document.body.classList.contains('vscode-light') ? '#ffffff' : '#1e1e1e');
+  terminalContainerEl.style.backgroundColor = bg;
   const screenReaderMode = document.body.classList.contains('vscode-using-screen-reader');
 
   tabs.forEach((tab) => {
     tab.term.options.theme = currentTheme;
     tab.term.options.screenReaderMode = screenReaderMode;
+    tab.element.style.backgroundColor = bg;
+    if (tab.term.element) {
+      tab.term.element.style.backgroundColor = bg;
+    }
   });
 }
 
@@ -279,9 +284,13 @@ function registerCustomLinkProvider(term: Terminal) {
 }
 
 function createTab(id: string, title: string, isAgent: boolean, select = true): Tab {
+  const initialTheme = getTerminalTheme();
+  const bg = initialTheme.background || (document.body.classList.contains('vscode-light') ? '#ffffff' : '#1e1e1e');
+
   const termEl = document.createElement('div');
   termEl.className = 'terminal-instance';
   termEl.style.display = 'none';
+  termEl.style.backgroundColor = bg;
   terminalContainerEl.appendChild(termEl);
 
   const term = new Terminal({
@@ -293,7 +302,7 @@ function createTab(id: string, title: string, isAgent: boolean, select = true): 
     scrollback: currentConfig.scrollback,
     disableStdin: isAgent,
     screenReaderMode: document.body.classList.contains('vscode-using-screen-reader'),
-    theme: getTerminalTheme()
+    theme: initialTheme
   });
 
   // Intercept DECSCUSR (CSI Ps SP q) to protect user cursor configuration
@@ -346,6 +355,9 @@ function createTab(id: string, title: string, isAgent: boolean, select = true): 
   term.loadAddon(fitAddon);
   registerCustomLinkProvider(term);
   term.open(termEl);
+  if (term.element) {
+    term.element.style.backgroundColor = bg;
+  }
   if (isAgent && term.textarea) {
     term.textarea.readOnly = true;
     term.textarea.setAttribute('aria-label', 'Read-only agent output');
@@ -528,18 +540,28 @@ window.addEventListener('keydown', (e) => {
   }
 }, true);
 
-// Window resize listener
+// Window and container resize listeners
 let resizeRaf: number | null = null;
-window.addEventListener('resize', () => {
+function scheduleFit(): void {
   if (resizeRaf !== null) cancelAnimationFrame(resizeRaf);
   resizeRaf = requestAnimationFrame(() => {
     resizeRaf = null;
     if (activeTabId && tabs.has(activeTabId)) {
       const active = tabs.get(activeTabId)!;
-      active.fitAddon.fit();
+      try {
+        active.fitAddon.fit();
+      } catch {
+        // Ignore
+      }
     }
   });
-});
+}
+
+window.addEventListener('resize', scheduleFit);
+if (typeof ResizeObserver !== 'undefined' && terminalContainerEl) {
+  const containerObserver = new ResizeObserver(scheduleFit);
+  containerObserver.observe(terminalContainerEl);
+}
 
 // Listen for messages from extension host
 window.addEventListener('message', (event) => {
@@ -590,6 +612,16 @@ window.addEventListener('message', (event) => {
             vscode.postMessage({ type: 'outputAck', tabId: msg.tabId, seq: msg.seq });
           }
         });
+      }
+      break;
+    }
+    case 'updateTitle': {
+      if (typeof msg.tabId === 'string' && typeof msg.title === 'string') {
+        const tab = tabs.get(msg.tabId);
+        if (tab && tab.title !== msg.title) {
+          tab.title = msg.title;
+          renderTabBar();
+        }
       }
       break;
     }
