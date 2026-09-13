@@ -1,0 +1,157 @@
+{
+  "name": "vscode-secondary-terminal",
+  "displayName": "Side Terminal",
+  "description": "Dedicated Side Bar Terminal with multiple tabs, interactive shell, cursor customization, and AI Agent execution monitoring.",
+  "version": "0.2.5",
+  "publisher": "local-dev",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "*"
+  ],
+  "contributes": {
+    "configuration": {
+      "title": "Side Terminal",
+      "properties": {
+        "secondaryTerminal.cursorBlink": {
+          "type": "boolean",
+          "default": true,
+          "description": "Controls whether the terminal cursor blinks."
+        },
+        "secondaryTerminal.cursorStyle": {
+          "type": "string",
+          "enum": [
+            "block",
+            "underline",
+            "bar"
+          ],
+          "default": "block",
+          "description": "Controls the cursor style in the side terminal."
+        },
+        "secondaryTerminal.fontSize": {
+          "type": "number",
+          "default": 12,
+          "description": "Controls the font size in pixels in the side terminal."
+        },
+        "secondaryTerminal.fontFamily": {
+          "type": "string",
+          "default": "Menlo, Monaco, 'Courier New', monospace, Consolas",
+          "description": "Controls the font family in the side terminal."
+        },
+        "secondaryTerminal.lineHeight": {
+          "type": "number",
+          "default": 1.2,
+          "description": "Controls the line height relative to font size in the side terminal."
+        },
+        "secondaryTerminal.scrollback": {
+          "type": "number",
+          "default": 5000,
+          "description": "Controls the maximum number of lines kept in scrollback history."
+        },
+        "secondaryTerminal.mirrorAgentTerminals": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically mirror recognized AI Agent terminals (Cline, Copilot, Roo, Antigravity) into the Side Terminal view."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "secondary-terminal-container",
+          "title": "Side Terminal",
+          "icon": "media/terminal.svg"
+        }
+      ]
+    },
+    "views": {
+      "secondary-terminal-container": [
+        {
+          "type": "webview",
+          "id": "secondary-terminal.view",
+          "name": "Side Terminal"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "secondaryTerminal.toggle",
+        "title": "Toggle Side Terminal",
+        "category": "Terminal",
+        "icon": "$(layout-sidebar-right)"
+      },
+      {
+        "command": "secondaryTerminal.show",
+        "title": "Focus Side Terminal",
+        "category": "Terminal",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "secondaryTerminal.openEditorTerminal",
+        "title": "Open Terminal in Editor Area",
+        "category": "Terminal",
+        "icon": "$(split-horizontal)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "secondaryTerminal.toggle",
+        "key": "ctrl+alt+t",
+        "mac": "cmd+alt+t"
+      },
+      {
+        "command": "secondaryTerminal.openEditorTerminal",
+        "key": "ctrl+alt+e",
+        "mac": "cmd+alt+e"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "secondaryTerminal.toggle"
+        },
+        {
+          "command": "secondaryTerminal.show"
+        },
+        {
+          "command": "secondaryTerminal.openEditorTerminal"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile-webview": "esbuild ./src/webview/main.ts --bundle --outfile=dist/webview.js --format=iife --platform=browser && cp node_modules/@xterm/xterm/css/xterm.css dist/xterm.css",
+    "compile-ext": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:node-pty --format=cjs --platform=node",
+    "compile": "npm run compile-ext && npm run compile-webview",
+    "watch": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:node-pty --format=cjs --platform=node --watch",
+    "package-ext": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:node-pty --format=cjs --platform=node --minify",
+    "package-webview": "esbuild ./src/webview/main.ts --bundle --outfile=dist/webview.js --format=iife --platform=browser --minify && cp node_modules/@xterm/xterm/css/xterm.css dist/xterm.css",
+    "package": "npm run package-ext && npm run package-webview",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile",
+    "lint": "tsc --noEmit",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.6",
+    "@types/node": "18.x",
+    "@types/vscode": "^1.80.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "esbuild": "^0.20.2",
+    "mocha": "^10.4.0",
+    "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "node-pty": "^1.0.1"
+  },
+  "icon": "media/icon.png"
+}

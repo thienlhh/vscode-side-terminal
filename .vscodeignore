@@ -1,0 +1,9 @@
+.vscode/**
+.vscode-test/**
+src/**
+test/**
+tasks/**
+SPEC.md
+tsconfig.json
+.gitignore
+out/**
