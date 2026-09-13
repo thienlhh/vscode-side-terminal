@@ -1,11 +1,11 @@
-# Technical Specification: Side Bar Terminal for VS Code & Antigravity (v0.2.5)
+# Technical Specification: Side Bar Terminal for VS Code & Antigravity (v0.2.6)
 
 ## 1. Overview
 Side Bar Terminal provides an independent terminal environment inside the Secondary Side Bar (Auxiliary Bar) of VS Code and Antigravity IDE. It runs alongside the native bottom panel terminal without relocating or interfering with existing panels, offering multi-tab management, live interactive shells, and an AI Agent Bridge.
 
 ---
 
-## 2. Implemented Architecture & Features (v0.2.5)
+## 2. Implemented Architecture & Features (v0.2.6)
 
 ### 2.1 View & Container Architecture
 - **Webview View Container**: Registered as `secondary-terminal-container` in the Activity Bar with view ID `secondary-terminal.view`.
@@ -45,24 +45,36 @@ Side Bar Terminal provides an independent terminal environment inside the Second
 - **Agent Recognition**: Automatically discovers and mirrors terminals created by AI coding agents (Cline, Roo Code, Copilot, Antigravity) with prefix `🤖 <Agent>`.
 - **Execution Streaming**: Streams command output via `vscode.window.onDidStartTerminalShellExecution` into dedicated agent tabs.
 
+### 2.7 Interactive Link Navigation & Productivity Controls
+- **Integrated LinkProvider**: Employs an xterm `ILinkProvider` recognizing both web URLs (`http://`, `https://`) and file paths with line/column specifications (`src/extension.ts:15:4`, `SPEC.md:10`, `/abs/path/file.py:42`).
+  - Web links open in the user's default browser via `vscode.env.openExternal`.
+  - File paths resolve against workspace folders or absolute paths, opening in the editor with `vscode.window.showTextDocument` and positioning the cursor and viewport at the exact line and column.
+- **Header Bar Quick Actions**:
+  - `+`: Instant tab creation.
+  - `⤢` (Open in Editor): Seamlessly pops out or launches a full-width terminal in the editor area (`Cmd+Alt+E` / `Ctrl+Alt+E`).
+  - `⊘` (Clear Terminal): Instantly resets the active tab's scroll buffer.
+- **Fast Keyboard Tab Switching**: `Alt+[` / `Alt+]` (or `Alt+Left` / `Alt+Right`) cycles smoothly across active terminal tabs directly within the webview.
+- **Environment Flags for CLI Tools**: Injects `TERM_PROGRAM: 'vscode'` and `TERM_PROGRAM_VERSION` into spawned PTY sessions, enabling coding AI CLI tools (`agy`, `claude-code`, `aider`, `gh copilot`) to adapt line wrapping and display formats.
+- **Visibility & Focus Synchronization**: Hooks `webviewView.onDidChangeVisibility` to automatically re-fit (`fitAddon.fit()`) and re-focus active terminal sessions whenever the sidebar is revealed.
+
 ---
 
-## 3. Limitations When Running Coding AI Agents & Mitigation Strategies
+## 3. Limitations & Addressed Mitigations When Running Coding AI Agents
 
-| Area | Technical Limitation | Mitigation Approach |
+| Area | Technical Limitation | Status & Implemented Mitigation |
 | :--- | :--- | :--- |
-| **Column Width & TUI Layouts** | Secondary Side Bar is narrow (300–450px / ~40–60 columns). Rich terminal UIs (`agy`, `claude`, `codex`, `aider`) that display side-by-side git diffs, wide tables, or box borders experience line wrapping and visual clipping. | **1.** Use `Cmd + Alt + E` (`secondaryTerminal.openEditorTerminal`) to open a full-width terminal in the editor area beside your code when reviewing extensive diffs.<br>**2.** Configure CLI tools to use linear/unified diffs (e.g., `git config --global diff.noprefix true`, or tool-specific single-column flags). |
-| **Input Forwarding vs. Raw TTY Interactivity** | When mirroring external agent extension terminals (Cline, Roo Code), input is routed via `terminal.sendText()`. This sends line-buffered text and cannot convey low-level raw key events (arrow keys, interactive curses menus, hotkey signals). | **1.** Run the agent's CLI directly inside a native Side Terminal tab (which has a full PTY backing) rather than relying on extension mirroring if interactive menu control is needed.<br>**2.** Keep input prompts in agent configurations set to non-interactive or automated confirmation mode where available. |
-| **File Path Navigation & Links** | Unlike native VS Code terminals, Webview terminals do not automatically resolve stack traces or file paths (`src/file.ts:42:10`) to clickable links that jump to editor lines. | **1.** Implement a custom xterm `LinkProvider` via `@xterm/addon-web-links` or regex pattern matchers that message the extension host to call `vscode.workspace.openTextDocument()`.<br>**2.** For standard URLs (`http://`, `https://`), xterm link addons can open them directly. |
-| **Shell Integration Decorations** | Native VS Code terminals inject custom shell integration scripts for command status markers, exit code gutter glyphs, and sticky headers. The Side Terminal PTY runs a raw user shell. | **1.** Individual commands are tracked by tab separation.<br>**2.** Optional future enhancement: inject standard OSC 133 shell integration sequences into the PTY session. |
-| **Split Panes** | Native terminal panels allow splitting terminals horizontally and vertically within the same view. Side Terminal only supports tabs. | Use multiple tabs (`Terminal 1`, `Terminal 2`) and switch via tab clicks or keybindings. Split views in narrow sidebars cause extreme column compression. |
-| **Webview Lifecycle & Throttling** | When the sidebar is collapsed or moved offscreen, VS Code throttles the webview DOM rendering. | Background Node PTY processes remain alive in the extension host. When the sidebar is reopened, `switchTab()` triggers `fitAddon.fit()` and re-focuses the terminal automatically. |
-| **Memory Footprint with Deep Scrollback** | Keeping multiple tabs with high scrollback history (10,000+ lines) stores ANSI buffers in webview DOM memory. | Adjust `secondaryTerminal.scrollback` in settings (default: 5000 lines) to balance history needs with memory usage. |
+| **Column Width & TUI Layouts** | Secondary Side Bar is narrow (300–450px / ~40–60 columns). Rich terminal UIs (`agy`, `claude`, `codex`, `aider`) that display side-by-side git diffs, wide tables, or box borders experience line wrapping and visual clipping. | **Mitigated:**<br>1. Click header popout `⤢` or press `Cmd + Alt + E` (`secondaryTerminal.openEditorTerminal`) to open a full-width terminal in the editor area beside your code.<br>2. `TERM_PROGRAM=vscode` is automatically set in PTY environment so tools output single-column / linear diffs.<br>3. Fast tab clearing `⊘` cleans up bloated output buffers. |
+| **Input Forwarding vs. Raw TTY Interactivity** | When mirroring external agent extension terminals (Cline, Roo Code), input is routed via `terminal.sendText()`. This sends line-buffered text and cannot convey low-level raw key events (arrow keys, interactive curses menus, hotkey signals). | **Mitigated:**<br>1. Run agent CLIs directly inside native Side Terminal tabs (which have full Node PTY backing) when interactive menus or arrow keys are required.<br>2. Use mirrored agent tabs for automated, non-interactive execution streaming. |
+| **File Path Navigation & Links** | Webview terminals standardly do not resolve stack traces or file paths (`src/file.ts:42:10`) to clickable links that jump to editor lines. | **Resolved:**<br>Custom xterm `LinkProvider` parses file paths with optional `:line[:col]` and web URLs. Clicking a path resolves workspace paths and jumps directly to the editor cursor position via `vscode.window.showTextDocument`. |
+| **Shell Integration Decorations** | Native VS Code terminals inject custom shell integration scripts for command status markers, exit code gutter glyphs, and sticky headers. The Side Terminal PTY runs a raw user shell. | **Architectural Choice:**<br>Individual commands and agent sessions are isolated across discrete tabs. Native PTY environment exports standard VS Code identifiers. |
+| **Split Panes** | Native terminal panels allow splitting terminals horizontally and vertically within the same view. Side Terminal only supports tabs. | **Mitigated:**<br>Use multiple tabs (`Terminal 1`, `Terminal 2`) and switch rapidly via tab clicks or `Alt+[` / `Alt+]` shortcuts. Split views inside narrow 300px sidebars cause severe column compression. |
+| **Webview Lifecycle & Throttling** | When the sidebar is collapsed or moved offscreen, VS Code throttles the webview DOM rendering. | **Resolved:**<br>1. Background Node PTY processes remain alive in the extension host (`retainContextWhenHidden: true`).<br>2. `webviewView.onDidChangeVisibility` automatically triggers `fitAddon.fit()` and re-focuses when the sidebar is reopened. |
+| **Memory Footprint with Deep Scrollback** | Keeping multiple tabs with high scrollback history (10,000+ lines) stores ANSI buffers in webview DOM memory. | **Configurable:**<br>Adjust `secondaryTerminal.scrollback` in settings (default: 5000 lines) to balance history needs with memory usage. Clear buffer button (`⊘`) instantly purges memory on demand. |
 
 ---
 
 ## 4. Verification & Testing
 
-- **Mocha Unit & Integration Tests**: Validates command registration, tab creation, and editor placement (`npm test`).
+- **Mocha Unit & Integration Tests**: Validates command registration, tab creation, link navigation messages (`openFile`, `openUrl`), and editor placement (`npm test`).
 - **Compilation & Type Checking**: Verified clean builds with `tsc --noEmit` and `esbuild`.
-- **End-to-End Packaging**: Packaged via `@vscode/vsce package` and tested inside Antigravity IDE (`v0.2.5`).
+- **End-to-End Packaging**: Packaged via `@vscode/vsce package` and tested inside Antigravity IDE (`v0.2.6`).

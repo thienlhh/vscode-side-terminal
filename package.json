@@ -2,7 +2,7 @@
   "name": "vscode-secondary-terminal",
   "displayName": "Side Terminal",
   "description": "Dedicated Side Bar Terminal with multiple tabs, interactive shell, cursor customization, and AI Agent execution monitoring.",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "publisher": "local-dev",
   "engines": {
     "vscode": "^1.80.0"

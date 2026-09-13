@@ -101,19 +101,31 @@ html, body {
   background-color: rgba(128, 128, 128, 0.3);
 }
 
-#new-tab-btn {
+#header-actions {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  padding-right: 4px;
+}
+
+.header-action-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 24px;
+  height: 24px;
   cursor: pointer;
   color: var(--vscode-foreground, #cccccc);
-  font-size: 16px;
+  font-size: 15px;
   user-select: none;
+  border-radius: 3px;
+  margin-left: 2px;
+  opacity: 0.8;
+  transition: opacity 0.15s ease, background-color 0.15s ease;
 }
 
-#new-tab-btn:hover {
+.header-action-btn:hover {
+  opacity: 1;
   background-color: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.18));
 }
 

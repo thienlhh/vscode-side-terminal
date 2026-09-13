@@ -1,4 +1,4 @@
-import { Terminal, ITheme } from '@xterm/xterm';
+import { Terminal, ITheme, ILink } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 
 declare function acquireVsCodeApi(): {
@@ -42,9 +42,21 @@ let activeTabId: string | null = null;
 const tabListEl = document.getElementById('tab-list') as HTMLElement;
 const terminalContainerEl = document.getElementById('terminal-container') as HTMLElement;
 const newTabBtn = document.getElementById('new-tab-btn') as HTMLElement;
+const openEditorBtn = document.getElementById('open-editor-btn') as HTMLElement;
+const clearTabBtn = document.getElementById('clear-tab-btn') as HTMLElement;
 
-newTabBtn.addEventListener('click', () => {
+newTabBtn?.addEventListener('click', () => {
   vscode.postMessage({ type: 'createTab' });
+});
+
+openEditorBtn?.addEventListener('click', () => {
+  vscode.postMessage({ type: 'openEditorTerminal' });
+});
+
+clearTabBtn?.addEventListener('click', () => {
+  if (activeTabId && tabs.has(activeTabId)) {
+    tabs.get(activeTabId)!.term.clear();
+  }
 });
 
 function getComputedColor(varName: string, fallback: string): string {
@@ -124,6 +136,93 @@ const themeObserver = new MutationObserver(() => {
 });
 themeObserver.observe(document.body, { attributes: true, attributeFilter: ['class', 'style'] });
 
+function registerCustomLinkProvider(term: Terminal) {
+  term.registerLinkProvider({
+    provideLinks(bufferLineNumber: number, callback: (links: ILink[] | undefined) => void) {
+      const line = term.buffer.active.getLine(bufferLineNumber - 1);
+      if (!line) {
+        callback(undefined);
+        return;
+      }
+      const lineText = line.translateToString(true);
+      if (!lineText) {
+        callback(undefined);
+        return;
+      }
+
+      const links: ILink[] = [];
+
+      // 1. Detect Web URLs (http:// or https://)
+      const urlRegex = /(https?:\/\/[^\s"'`<>()[\]{}]+)/g;
+      let match: RegExpExecArray | null;
+      while ((match = urlRegex.exec(lineText)) !== null) {
+        const url = match[1];
+        const startX = match.index + 1;
+        const endX = match.index + url.length;
+
+        links.push({
+          text: url,
+          range: {
+            start: { x: startX, y: bufferLineNumber },
+            end: { x: endX, y: bufferLineNumber }
+          },
+          decorations: {
+            pointerCursor: true,
+            underline: true
+          },
+          activate(_event: MouseEvent, text: string) {
+            vscode.postMessage({ type: 'openUrl', url: text });
+          }
+        });
+      }
+
+      // 2. Detect File Paths with optional :line[:col]
+      // Matches path patterns like src/index.ts:12:5, ./README.md:20, /abs/path.js, SPEC.md
+      const fileRegex = /(?:^|[\s"'`(\[])((?:[a-zA-Z]:[\\\/]|\/|\.{1,2}[\\\/]|[a-zA-Z0-9_.-]+[\\\/])?[a-zA-Z0-9_.-]+\.[a-zA-Z0-9_+-]+(?::(\d+)(?::(\d+))?)?)/g;
+      while ((match = fileRegex.exec(lineText)) !== null) {
+        const fullMatch = match[1];
+        const lineNum = match[2] ? parseInt(match[2], 10) : undefined;
+        const colNum = match[3] ? parseInt(match[3], 10) : undefined;
+
+        const colonIdx = fullMatch.indexOf(':');
+        const rawPath = colonIdx !== -1 ? fullMatch.substring(0, colonIdx) : fullMatch;
+
+        const matchStart = match.index + (match[0].length - fullMatch.length);
+        const startX = matchStart + 1;
+        const endX = matchStart + fullMatch.length;
+
+        const overlaps = links.some(
+          (l) => (startX >= l.range.start.x && startX <= l.range.end.x) ||
+                 (endX >= l.range.start.x && endX <= l.range.end.x)
+        );
+        if (overlaps) continue;
+
+        links.push({
+          text: fullMatch,
+          range: {
+            start: { x: startX, y: bufferLineNumber },
+            end: { x: endX, y: bufferLineNumber }
+          },
+          decorations: {
+            pointerCursor: true,
+            underline: true
+          },
+          activate(_event: MouseEvent, _text: string) {
+            vscode.postMessage({
+              type: 'openFile',
+              path: rawPath,
+              line: lineNum,
+              col: colNum
+            });
+          }
+        });
+      }
+
+      callback(links.length > 0 ? links : undefined);
+    }
+  });
+}
+
 function createTab(id: string, title: string, isAgent: boolean): Tab {
   const termEl = document.createElement('div');
   termEl.className = 'terminal-instance';
@@ -198,6 +297,7 @@ function createTab(id: string, title: string, isAgent: boolean): Tab {
 
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
+  registerCustomLinkProvider(term);
   term.open(termEl);
 
   term.onData((data) => {
@@ -304,6 +404,26 @@ function renderTabBar() {
   });
 }
 
+// Keyboard navigation for tabs (Alt+[ / Alt+] or Alt+Left / Alt+Right)
+window.addEventListener('keydown', (e) => {
+  if (e.altKey && (e.key === '[' || e.key === 'ArrowLeft' || e.key === ']' || e.key === 'ArrowRight')) {
+    const tabIds = Array.from(tabs.keys());
+    if (tabIds.length <= 1 || !activeTabId) return;
+    const currentIndex = tabIds.indexOf(activeTabId);
+    if (currentIndex === -1) return;
+
+    if (e.key === '[' || e.key === 'ArrowLeft') {
+      const prevIndex = (currentIndex - 1 + tabIds.length) % tabIds.length;
+      switchTab(tabIds[prevIndex]);
+      e.preventDefault();
+    } else {
+      const nextIndex = (currentIndex + 1) % tabIds.length;
+      switchTab(tabIds[nextIndex]);
+      e.preventDefault();
+    }
+  }
+});
+
 // Window resize listener
 window.addEventListener('resize', () => {
   if (activeTabId && tabs.has(activeTabId)) {
@@ -345,6 +465,20 @@ window.addEventListener('message', (event) => {
     }
     case 'themeChanged': {
       updateAllThemes();
+      break;
+    }
+    case 'viewVisible': {
+      if (activeTabId && tabs.has(activeTabId)) {
+        const tab = tabs.get(activeTabId)!;
+        setTimeout(() => {
+          try {
+            tab.fitAddon.fit();
+            tab.term.focus();
+          } catch {
+            // Ignore
+          }
+        }, 50);
+      }
       break;
     }
   }

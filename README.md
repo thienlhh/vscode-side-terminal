@@ -8,6 +8,8 @@ A dedicated, high-performance Side Bar Terminal extension that runs independentl
 
 - 🖥️ **Independent Side Bar Terminal**: Lives in its own sidebar view container without moving or touching your bottom panel terminal.
 - 📑 **Full Tab Management**: Create multiple terminal tabs (`Terminal 1`, `Terminal 2`), switch between them, and close them with one click.
+- 🔗 **Clickable File Paths & URLs**: Automatically resolves stack traces (`src/file.ts:42:10`) to jump directly to editor coordinates and opens web links in the browser.
+- 🎛️ **Header Quick Actions**: Quick buttons to create tabs (`+`), pop out a full-width terminal in the editor area (`⤢`), or clear terminal scrollback (`⊘`).
 - 🤖 **AI Agent Bridge**: Automatically detects terminals spawned by AI coding agents, mirrors them as tabs (`🤖 <Agent Name>`), and streams command output in real time.
 - ⚡ **Native Shell Support**: Powered by `node-pty` and `@xterm/xterm` with full ANSI color support, resizing, and bash/zsh shell prompts.
 - 🔘 **One-Click Shortcuts**: `Cmd + Alt + T` (macOS) or `Ctrl + Alt + T` (Windows/Linux) instantly focuses and reveals the side terminal.
@@ -20,6 +22,7 @@ A dedicated, high-performance Side Bar Terminal extension that runs independentl
 | :--- | :--- | :--- | :--- |
 | `secondaryTerminal.toggle` | `Cmd + Alt + T` | `Ctrl + Alt + T` | Focus / Reveal Side Bar Terminal |
 | `secondaryTerminal.openEditorTerminal` | `Cmd + Alt + E` | `Ctrl + Alt + E` | Open Terminal in Editor Area |
+| Tab Navigation | `Alt + [` / `Alt + ]` | `Alt + [` / `Alt + ]` | Cycle Previous / Next Tab in Terminal |
 
 ---
 

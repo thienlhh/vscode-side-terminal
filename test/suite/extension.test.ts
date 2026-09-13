@@ -46,4 +46,81 @@ suite('Secondary Terminal Extension Test Suite', () => {
 
     terminal.dispose();
   });
+
+  test('TerminalViewProvider handles openFile, openUrl, and openEditorTerminal messages', async () => {
+    const path = await import('path');
+    const { TerminalViewProvider } = await import('../../src/provider/terminalViewProvider');
+    const extensionRoot = path.resolve(__dirname, '../../../');
+    const provider = new TerminalViewProvider(vscode.Uri.file(extensionRoot));
+
+    let messageListener: ((msg: any) => void) | undefined;
+    const postedMessages: any[] = [];
+
+    const mockWebview: any = {
+      options: {},
+      html: '',
+      cspSource: 'https:',
+      asWebviewUri: (uri: vscode.Uri) => uri,
+      onDidReceiveMessage: (listener: (msg: any) => void) => {
+        messageListener = listener;
+        return { dispose: () => {} };
+      },
+      postMessage: async (msg: any) => {
+        postedMessages.push(msg);
+        return true;
+      }
+    };
+
+    const mockWebviewView: any = {
+      webview: mockWebview,
+      visible: true,
+      show: () => {},
+      onDidChangeVisibility: (_listener: () => void) => {
+        return { dispose: () => {} };
+      }
+    };
+
+    provider.resolveWebviewView(mockWebviewView, {} as any, {} as any);
+    assert.ok(messageListener, 'Message listener should be registered');
+
+    // Test openEditorTerminal message
+    const termPromise = new Promise<vscode.Terminal>((resolve) => {
+      const sub = vscode.window.onDidOpenTerminal((term) => {
+        sub.dispose();
+        resolve(term);
+      });
+    });
+    messageListener!({ type: 'openEditorTerminal' });
+    const createdTerm = await termPromise;
+    assert.ok(createdTerm.name.includes('Editor Terminal'), 'Terminal name should indicate Editor Terminal');
+    createdTerm.dispose();
+
+    // Test openFile message with existing SPEC.md
+    const editorPromise = new Promise<vscode.TextEditor>((resolve) => {
+      const sub = vscode.window.onDidChangeActiveTextEditor((editor) => {
+        if (editor && editor.document.fileName.endsWith('SPEC.md')) {
+          sub.dispose();
+          resolve(editor);
+        }
+      });
+    });
+    messageListener!({ type: 'openFile', path: 'SPEC.md', line: 10, col: 1 });
+    await editorPromise;
+
+    let activeEditor = vscode.window.activeTextEditor;
+    for (let i = 0; i < 20; i++) {
+      if (activeEditor && activeEditor.selection.active.line === 9) {
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 50));
+      activeEditor = vscode.window.activeTextEditor;
+    }
+
+    assert.ok(activeEditor, 'SPEC.md should be opened in active editor');
+    assert.ok(activeEditor.document.fileName.endsWith('SPEC.md'), 'Active editor file should be SPEC.md');
+    assert.strictEqual(activeEditor.selection.active.line, 9, 'Cursor should be on line 10 (0-indexed 9)');
+
+    // Test openUrl message (http/https safe)
+    messageListener!({ type: 'openUrl', url: 'https://example.com' });
+  });
 });

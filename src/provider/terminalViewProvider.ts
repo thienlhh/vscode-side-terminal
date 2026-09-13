@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
+import { COMMANDS } from '../constants';
 
 let nodePty: typeof import('node-pty') | null = null;
 try {
@@ -112,6 +113,25 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           this._handleClose(message.tabId);
           break;
         }
+        case 'openUrl': {
+          this._handleOpenUrl(message.url);
+          break;
+        }
+        case 'openFile': {
+          this._handleOpenFile(message.path, message.line, message.col);
+          break;
+        }
+        case 'openEditorTerminal': {
+          vscode.commands.executeCommand(COMMANDS.OPEN_EDITOR_TERMINAL);
+          break;
+        }
+      }
+    });
+
+    // Visibility listener to re-fit terminals when tab/sidebar is shown
+    webviewView.onDidChangeVisibility(() => {
+      if (webviewView.visible) {
+        this._view?.webview.postMessage({ type: 'viewVisible' });
       }
     });
 
@@ -299,6 +319,12 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
     let ptyProcess: any = null;
     let isNodePty = false;
 
+    const env: Record<string, string> = {
+      ...(process.env as Record<string, string>),
+      TERM_PROGRAM: 'vscode',
+      TERM_PROGRAM_VERSION: vscode.version || '1.80.0'
+    };
+
     if (nodePty) {
       try {
         fixPtyPermissions();
@@ -307,7 +333,7 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           cols: 80,
           rows: 25,
           cwd,
-          env: process.env as Record<string, string>
+          env
         });
 
         ptyProcess.onData((data: string) => {
@@ -332,7 +358,7 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
       const cp = require('child_process');
       ptyProcess = cp.spawn(shell, [], {
         cwd,
-        env: process.env,
+        env,
         stdio: ['pipe', 'pipe', 'pipe']
       });
 
@@ -362,6 +388,73 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
     });
 
     this._updateBadge();
+  }
+
+  private async _handleOpenUrl(urlStr: string): Promise<void> {
+    try {
+      const uri = vscode.Uri.parse(urlStr);
+      if (uri.scheme === 'http' || uri.scheme === 'https') {
+        await vscode.env.openExternal(uri);
+      }
+    } catch (err) {
+      console.error('Failed to open external url:', err);
+    }
+  }
+
+  private async _handleOpenFile(filePath: string, line?: number, col?: number): Promise<void> {
+    try {
+      let targetPath = filePath.trim();
+      targetPath = targetPath.replace(/^["'(\[]+|["')\]]+$/g, '');
+
+      let resolvedUri: vscode.Uri | null = null;
+      if (path.isAbsolute(targetPath)) {
+        if (fs.existsSync(targetPath)) {
+          resolvedUri = vscode.Uri.file(targetPath);
+        }
+      } else {
+        const folders = vscode.workspace.workspaceFolders;
+        if (folders && folders.length > 0) {
+          for (const folder of folders) {
+            const candidate = path.join(folder.uri.fsPath, targetPath);
+            if (fs.existsSync(candidate)) {
+              resolvedUri = vscode.Uri.file(candidate);
+              break;
+            }
+          }
+        }
+        if (!resolvedUri && this._extensionUri?.fsPath) {
+          const candidate = path.join(this._extensionUri.fsPath, targetPath);
+          if (fs.existsSync(candidate)) {
+            resolvedUri = vscode.Uri.file(candidate);
+          }
+        }
+        if (!resolvedUri) {
+          const candidate = path.resolve(targetPath);
+          if (fs.existsSync(candidate)) {
+            resolvedUri = vscode.Uri.file(candidate);
+          }
+        }
+      }
+
+      if (resolvedUri) {
+        const doc = await vscode.workspace.openTextDocument(resolvedUri);
+        const lineNum = Math.max(0, (line || 1) - 1);
+        const colNum = Math.max(0, (col || 1) - 1);
+        const position = new vscode.Position(lineNum, colNum);
+        const selection = new vscode.Range(position, position);
+
+        const editor = await vscode.window.showTextDocument(doc, {
+          selection,
+          preview: false
+        });
+        editor.selection = new vscode.Selection(position, position);
+        editor.revealRange(selection, vscode.TextEditorRevealType.InCenter);
+      } else {
+        vscode.window.showWarningMessage(`Could not locate file: ${filePath}`);
+      }
+    } catch (err) {
+      console.error('Failed to open file:', err);
+    }
   }
 
   private _handleInput(tabId: string, data: string): void {
@@ -438,7 +531,11 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
 <body>
   <div id="header-bar">
     <div id="tab-list"></div>
-    <div id="new-tab-btn" title="New Terminal (+)">+</div>
+    <div id="header-actions">
+      <div id="new-tab-btn" class="header-action-btn" title="New Terminal (+)">+</div>
+      <div id="open-editor-btn" class="header-action-btn" title="Open Terminal in Editor Area (Cmd+Alt+E / Ctrl+Alt+E)">&#x2922;</div>
+      <div id="clear-tab-btn" class="header-action-btn" title="Clear Terminal (Cmd+K / Ctrl+L)">&#x2298;</div>
+    </div>
   </div>
   <div id="terminal-container"></div>
   <script src="${scriptUri}"></script>
