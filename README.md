@@ -4,6 +4,9 @@ An independent sidebar terminal that runs alongside VS Code's built-in integrate
 
 Side Terminal uses xterm and native PTYs (`node-pty`) for interactive shells, multiple tabs, ANSI output, resize, and clickable file/URL links. It operates independently: it does not move your built-in Terminal view, relocate other panels, or change global terminal settings.
 
+> [!WARNING]
+> **Early Development**: This extension is in active early development and is currently **only tested on macOS** (Apple Silicon / Intel). Windows and Linux support is experimental and has not yet been validated in live environments. Feedback and bug reports are welcome on [GitHub Issues](https://github.com/thienlhh/vscode-side-terminal/issues).
+
 ## Setup
 
 1. Install the extension and reload VS Code.
@@ -60,6 +63,7 @@ Run interactive agent CLIs (e.g., `agy`, `codex`, `aider`) directly in a local S
 
 ## Explicit Limits & Boundaries
 
+- **Early Platform Support**: Tested and validated exclusively on **macOS**. Windows (ConPTY) and Linux support is currently experimental.
 - **Native Terminal Services**: Command decorations, task/debug terminal identity, shell integration terminal environment collections, and persistent session reconnects across VS Code window reloads are not provided.
 - **Alternate Screen Replay**: Recreating a view replays bounded recent output; full-screen TUI apps (e.g., `vim`, `htop`) may require redrawing after view recreation.
 - **Split Panes**: Multi-tab layout is supported; split panes within a tab are deferred.
