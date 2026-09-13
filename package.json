@@ -1,9 +1,9 @@
 {
-  "name": "vscode-secondary-terminal",
+  "name": "side-terminal",
   "displayName": "Side Terminal",
   "description": "Dedicated Side Bar Terminal with multiple tabs, interactive shell, cursor customization, and AI Agent execution monitoring.",
   "version": "0.2.6",
-  "publisher": "local-dev",
+  "publisher": "thienle",
   "engines": {
     "vscode": "^1.80.0"
   },
@@ -12,8 +12,22 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/local-dev/vscode-secondary-terminal"
+    "url": "https://github.com/thienlhh/vscode-side-terminal"
   },
+  "license": "MIT",
+  "homepage": "https://github.com/thienlhh/vscode-side-terminal#readme",
+  "bugs": {
+    "url": "https://github.com/thienlhh/vscode-side-terminal/issues"
+  },
+  "keywords": [
+    "terminal",
+    "side-terminal",
+    "secondary-terminal",
+    "sidebar",
+    "pty",
+    "xterm",
+    "ai-agent"
+  ],
   "main": "./dist/extension.js",
   "activationEvents": [
     "onView:secondary-terminal.view",
@@ -170,7 +184,9 @@
     "pretest": "npm run compile-tests && npm run compile",
     "lint": "tsc --noEmit",
     "test:unit": "node scripts/test-unit.cjs",
-    "test": "npm run test:unit && node ./out/test/runTest.js"
+    "test": "npm run test:unit && node ./out/test/runTest.js",
+    "package:vsix": "npx @vscode/vsce package --no-git-tag-version",
+    "publish:openvsx": "ovsx publish"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.6",
@@ -181,6 +197,7 @@
     "@xterm/xterm": "^6.0.0",
     "esbuild": "^0.20.2",
     "mocha": "^10.4.0",
+    "ovsx": "^1.2.0",
     "typescript": "^5.4.5"
   },
   "dependencies": {

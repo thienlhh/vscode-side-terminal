@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Context and operational guidelines for AI coding agents working on `vscode-secondary-terminal`.
+Context and operational guidelines for AI coding agents working on `vscode-side-terminal`.
 
 ---
 

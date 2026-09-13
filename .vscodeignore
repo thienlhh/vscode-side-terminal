@@ -2,16 +2,14 @@
 .vscode-test/**
 src/**
 test/**
-tasks/**
 scripts/**
-docs/**
-SPEC.md
 tsconfig.json
 .gitignore
 .DS_Store
 *.vsix
 out/**
 **/*.map
+AGENTS.md
 node_modules/**/*.pdb
 node_modules/**/*.md
 node_modules/**/*.test.js

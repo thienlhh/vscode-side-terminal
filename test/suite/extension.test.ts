@@ -2,9 +2,9 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { COMMANDS } from '../../src/constants';
 
-suite('Secondary Terminal Extension Test Suite', () => {
+suite('Side Terminal Extension Test Suite', () => {
   suiteSetup(async () => {
-    const ext = vscode.extensions.getExtension('local-dev.vscode-secondary-terminal');
+    const ext = vscode.extensions.getExtension('thienle.side-terminal');
     assert.ok(ext, 'The extension under test must be installed');
     if (ext && !ext.isActive) {
       await ext.activate();
