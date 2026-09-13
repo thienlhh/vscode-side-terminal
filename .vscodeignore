@@ -9,6 +9,7 @@ tsconfig.json
 *.vsix
 out/**
 **/*.map
+.env
 AGENTS.md
 node_modules/**/*.pdb
 node_modules/**/*.md
