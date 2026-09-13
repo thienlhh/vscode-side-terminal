@@ -195,8 +195,8 @@
     "@vscode/test-electron": "^3.1.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
-    "esbuild": "^0.20.2",
-    "mocha": "^10.4.0",
+    "esbuild": "^0.28.2",
+    "mocha": "^12.0.1",
     "ovsx": "^1.2.0",
     "typescript": "^5.4.5"
   },
